@@ -1,0 +1,22 @@
+# ==============================================================================
+# Dependencies for VENTSEG 4D Cardiac Medical Image Viewer & AI Quantification
+# ==============================================================================
+
+# Deep Learning / PyTorch Framework
+torch>=1.12.0
+torchvision>=0.13.0
+
+# Image Processing & Augmentations
+opencv-python>=4.5.0
+albumentations>=1.0.0,<2.0.0
+Pillow>=8.0.0
+
+# Medical Image I/O & Scientific Computing
+nibabel>=3.2.0
+numpy>=1.21.0,<2.0.0
+scipy>=1.7.0
+matplotlib>=3.3.0
+
+# Graphical User Interface & Media Export
+PyQt6>=6.5.0
+imageio>=2.30.0
