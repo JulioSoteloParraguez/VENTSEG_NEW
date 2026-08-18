@@ -28,6 +28,7 @@
 - [System Requirements](#system-requirements)
 - [Installation & Portable Setup](#installation--portable-setup)
 - [Download Models (Pre-trained Weights)](#download-models-pre-trained-weights)
+- [Download Sample Input Data](#download-sample-input-data)
 - [How to Run](#how-to-run)
 - [Project Directory Structure](#project-directory-structure)
 - [Cardiac Metrics & AI Models](#cardiac-metrics--ai-models)
@@ -147,6 +148,36 @@ Due to GitHub's file size limit (files > 100 MB cannot be hosted directly in the
        ├── resnet.py
        └── model_resnet34_unet_scratch_best_dice.pt
    ```
+
+---
+
+## Download Sample Input Data
+
+An example input dataset is available on Google Drive for testing and demonstration purposes:
+
+📁 **[Download Sample Input Data (Google Drive)](https://drive.google.com/drive/folders/1bKaooRMNtSt7z_AWuwHUdUfG1jtCdl1k?usp=sharing)**
+
+> [!WARNING]
+> **Important Note on Voxel Size Calibration (`voxel_size`):**
+> 
+> The `voxel_size` included in the example input file does **not** correspond to the actual physical voxel size of the original acquisition.
+> 
+> To obtain accurate volumetric measurements (in mL) and clinical biomarkers, you must know the true physical voxel spacing from your original DICOM dataset (`Pixel Spacing` $[dx, dy]$ and `Slice Thickness` / `Spacing Between Slices` $[dz]$ in millimeters).
+> 
+> You can update the voxel size using either of the following methods:
+> 
+> 1. **Directly from the VENTSEG 4D Graphical Interface:**
+>    - Open the dataset in the application.
+>    - Press `Ctrl + K` or click **Spatial Calibration / Voxel Size (mm)...** in the top menu or the sidebar.
+>    - Enter the true physical dimensions $[dx, dy, dz]$ in millimeters (e.g., `1.25, 1.25, 8.0`) and click **Apply Calibration**. The application will automatically update and recompute all quantitative volume curves and metrics in real time.
+> 
+> 2. **Directly in the MATLAB (`.mat`) File:**
+>    - Open or edit your `.mat` file in MATLAB / Python and define the `voxel_size` variable ($1 \times 3$ vector in mm):
+>      ```matlab
+>      % Example in MATLAB:
+>      voxel_size = [dx, dy, dz]; % e.g., [1.25, 1.25, 8.0] in mm
+>      save('image_SA.mat', 'image_SA', 'voxel_size', '-v7.3');
+>      ```
 
 ---
 
