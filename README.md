@@ -17,7 +17,7 @@
 
 <div align="center">
   <img src="images/Main_Windows.png" alt="VENTSEG 4D Main Application Interface" width="100%" />
-  <p><em>Figure 1: Main graphical user interface of VENTSEG 4D featuring interactive 4D cine playback, real-time slice scrolling, multi-class segmentation overlays (Left Ventricle, Myocardium, Right Ventricle), synchronized volumetric curves in milliliters (mL), and comprehensive clinical metrics.</em></p>
+  <p><em>Figure 1: Main graphical user interface of VENTSEG 4D featuring interactive 4D cine playback, real-time slice scrolling, multi-class segmentation overlays (Left Ventricle, Myocardium, Right Ventricle), synchronized volumetric curves in milliliters (mL), and comprehensive cardiac quantification metrics.</em></p>
 </div>
 
 ---
@@ -27,10 +27,12 @@
 - [Key Features](#key-features)
 - [System Requirements](#system-requirements)
 - [Installation & Portable Setup](#installation--portable-setup)
+- [Download Models (Pre-trained Weights)](#download-models-pre-trained-weights)
 - [How to Run](#how-to-run)
 - [Project Directory Structure](#project-directory-structure)
-- [Clinical Metrics & AI Models](#clinical-metrics--ai-models)
+- [Cardiac Metrics & AI Models](#cardiac-metrics--ai-models)
 - [Supported Formats & Export Capabilities](#supported-formats--export-capabilities)
+- [Research Purpose & Disclaimer](#research-purpose--disclaimer)
 - [Academic Origin & Acknowledgments](#academic-origin--acknowledgments)
 - [Funding & Research Grants](#funding--research-grants)
 - [AI-Assisted Interface Engineering](#ai-assisted-interface-engineering)
@@ -40,12 +42,12 @@
 
 ## Overview
 
-**VENTSEG 4D** is designed for radiologists, cardiologists, and medical imaging researchers. It offers high-performance 4D (3D spatial + time) cine MRI exploration along with an embedded deep learning model (**ResNet34-UNet**) capable of segmenting:
+**VENTSEG 4D** was developed exclusively for **research and academic purposes** to transfer and share with the scientific and medical imaging community a deep learning model developed for cardiac ventricular segmentation. It offers high-performance 4D (3D spatial + time) cine MRI exploration along with an embedded deep learning architecture (**ResNet34-UNet**) capable of segmenting:
 1. **Left Ventricular Cavity (LV)** - Class 1
 2. **Myocardium (MYO)** - Class 2
 3. **Right Ventricular Cavity (RV)** - Class 3
 
-The suite automates the identification of **End-Diastole (ED)** and **End-Systole (ES)** cardiac phases, computes clinical volumetric curves, calculates functional ejection fraction (**EF %**), stroke volume (**SV**), and myocardial mass, and exports publication-ready figures, reports, and animated loops.
+The suite automates the identification of **End-Diastole (ED)** and **End-Systole (ES)** cardiac phases, computes volumetric time-series curves, calculates functional biomarkers (ejection fraction **EF %**, stroke volume **SV**, and myocardial mass), and exports research figures, summary reports, and animated cine loops.
 
 ---
 
@@ -58,17 +60,17 @@ The suite automates the identification of **End-Diastole (ED)** and **End-Systol
   - **Full Slice Mosaic**: Complete spatial anatomical coverage across all Z-slices.
 - **Automated AI Segmentation**: In-memory deep learning inference utilizing the pre-trained weights (`models/model_resnet34_unet_scratch_best_dice.pt`). Supports CPU and NVIDIA CUDA GPU execution.
 - **Automated Cardiac Phase Detection**: Automatic extraction of peak expansion (ED) and peak contraction (ES) from time-series volume curves.
-- **Clinical Biomarkers Calculation**:
+- **Quantitative Cardiac Biomarkers Calculation**:
   - Left & Right Ventricle Ejection Fraction (LV EF %, RV EF %)
   - Stroke Volume (SV in mL)
   - End-Diastolic Volume (EDV in mL) & End-Systolic Volume (ESV in mL)
   - Myocardial Mass (in grams, using standard myocardial density of 1.05 g/cm³)
 - **Export & Reporting Options**:
   - Segmented 4D Dataset (`.mat`)
-  - Formatted Clinical Diagnostic Report (`.txt`)
+  - Formatted Quantification Summary Report (`.txt`)
   - Volumetric Time-Series Curves (`.csv`)
   - High-Resolution Viewport Figures (`.png`, `.jpg`)
-  - Animated Cine Cine-loops (`.gif`)
+  - Animated Cine-loops (`.gif`)
 
 ---
 
@@ -128,6 +130,26 @@ All required libraries (`PyQt6`, `torch`, `torchvision`, `albumentations`, `open
 
 ---
 
+## Download Models (Pre-trained Weights)
+
+Due to GitHub's file size limit (files > 100 MB cannot be hosted directly in the repository), the pre-trained neural network weights (`model_resnet34_unet_scratch_best_dice.pt`, ~143 MB) and model architecture files are hosted on Google Drive:
+
+📥 **[Download Models Folder (Google Drive)](https://drive.google.com/drive/folders/1wZ_0Di2xuCjZOw6atymoHlt45K8AJHeV?usp=sharing)**
+
+### Setup Steps:
+1. Open the [Google Drive link](https://drive.google.com/drive/folders/1wZ_0Di2xuCjZOw6atymoHlt45K8AJHeV?usp=sharing).
+2. Download the `models` folder or its files (`__init__.py`, `resnet.py`, and `model_resnet34_unet_scratch_best_dice.pt`).
+3. Place the `models/` folder directly in the root directory of this project:
+   ```text
+   ventseg/
+   └── models/
+       ├── __init__.py
+       ├── resnet.py
+       └── model_resnet34_unet_scratch_best_dice.pt
+   ```
+
+---
+
 ## How to Run
 
 ### Interactive GUI Mode
@@ -157,10 +179,10 @@ ventseg/
 │   ├── Logo.png                 # Application logo (PNG)
 │   ├── Logo.ico                 # Multi-resolution application icon (ICO)
 │   └── Main_Windows.png         # Main application interface preview
-├── models/
+├── models/                      # Downloaded from Google Drive
 │   ├── __init__.py              # Model selector and package interface
 │   ├── resnet.py                # ResNet34-UNet architecture definitions
-│   └── model_resnet34_unet_scratch_best_dice.pt  # Pre-trained AI weights
+│   └── model_resnet34_unet_scratch_best_dice.pt  # Pre-trained AI weights (~143 MB)
 └── utils/
     ├── __init__.py              # Utilities package interface
     ├── data_augmentation.py     # Pre-processing and test-time augmentation
@@ -170,7 +192,7 @@ ventseg/
 
 ---
 
-## Clinical Metrics & AI Models
+## Cardiac Metrics & AI Models
 
 The application performs automated segmentation using a 2D ResNet34-UNet model evaluated slice-by-slice across 3D spatial slices ($Z$) and cardiac temporal frames ($T$).
 
@@ -192,10 +214,19 @@ The application performs automated segmentation using a 2D ResNet34-UNet model e
   - NumPy arrays (`.npy`, `.npz`).
 - **Export Formats**:
   - MATLAB `.mat` workspace containing raw volumes, segmentation masks, and metrics.
-  - Formatted text report (`.txt`) with patient metadata and clinical results.
+  - Formatted text report (`.txt`) with metadata and calculated quantitative results.
   - Volumetric time curves (`.csv`).
   - High-resolution figures (`.png`, `.jpg`).
-  - Animated Cine Cine-loops (`.gif`).
+  - Animated Cine-loops (`.gif`).
+
+---
+
+## Research Purpose & Disclaimer
+
+> [!IMPORTANT]
+> **Research & Community Knowledge Transfer**
+> 
+> This software is an academic research suite developed to demonstrate and transfer to the community a deep learning model for automated ventricular segmentation in cine cardiac MRI. It was **not** created by or for certified clinical practice, and it is **not** intended for primary clinical diagnosis or medical treatment decisions.
 
 ---
 
@@ -224,12 +255,12 @@ This research and its software developments were funded and supported by the Nat
 
 ## AI-Assisted Interface Engineering
 
-The modern interactive user interface, multi-view 4D cine rendering architecture, physical voxel calibration system, clinical diagnostic reporting suite, and high-performance workflow engineering of this software were developed and enhanced with the assistance of **Google Antigravity**, leveraging advanced agentic AI coding capabilities for medical and scientific application design.
+The modern interactive user interface, multi-view 4D cine rendering architecture, physical voxel calibration system, quantification reporting suite, and high-performance workflow engineering of this software were developed and enhanced with the assistance of **Google Antigravity**, leveraging advanced agentic AI coding capabilities for medical and scientific application design.
 
 ---
 
 ## Troubleshooting & FAQ
 
-- **Error: "Failed to import deep learning modules"**: Ensure your virtual environment is active before starting `viewer_4d.py` (`.\.venv\Scripts\Activate.ps1` or `source .venv/bin/activate`).
+- **Error: "Failed to import deep learning modules"**: Ensure your virtual environment is active and that the `models/` folder has been downloaded from Google Drive and placed in the project root (`.\.venv\Scripts\Activate.ps1` or `source .venv/bin/activate`).
 - **GPU vs CPU**: The application automatically detects available NVIDIA CUDA devices. If no CUDA-capable GPU is found, it automatically falls back to CPU computation.
 - **Python Version**: If using Python 3.12, binary wheels are used for all dependencies for fast, compiler-free installation.
