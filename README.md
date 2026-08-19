@@ -3,7 +3,7 @@
   <h1>VENTSEG 4D</h1>
   <h3>Cardiac Medical Image Viewer & AI Quantification Suite</h3>
   <p>
-    <b>Interactive 4D Cine Cardiac MRI Workstation • Deep Learning Multi-Class Segmentation • Quantitative Functional Biomarkers</b>
+    <b>Interactive 4D Cine Cardiac MRI Workstation • Deep Learning Multi-Class Segmentation • Manual Correction & Topology Editor • Quantitative Functional Biomarkers</b>
   </p>
 
   [![Python Version](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
@@ -25,6 +25,8 @@
 ## Table of Contents
 - [Overview](#overview)
 - [Key Features](#key-features)
+- [Interactive Manual Segmentation Correction & Topology Editor](#interactive-manual-segmentation-correction--topology-editor)
+- [Keyboard Shortcuts & Quick Navigation](#keyboard-shortcuts--quick-navigation)
 - [System Requirements](#system-requirements)
 - [Installation & Portable Setup](#installation--portable-setup)
 - [Download Models (Pre-trained Weights)](#download-models-pre-trained-weights)
@@ -44,11 +46,11 @@
 ## Overview
 
 **VENTSEG 4D** was developed exclusively for **research and academic purposes** to transfer and share with the scientific and medical imaging community a deep learning model developed for cardiac ventricular segmentation. It offers high-performance 4D (3D spatial + time) cine MRI exploration along with an embedded deep learning architecture (**ResNet34-UNet**) capable of segmenting:
-1. **Left Ventricular Cavity (LV)** - Class 1
-2. **Myocardium (MYO)** - Class 2
-3. **Right Ventricular Cavity (RV)** - Class 3
+1. **Left Ventricular Cavity (LV)** - Class 1 (Red)
+2. **Myocardium (MYO)** - Class 2 (Green)
+3. **Right Ventricular Cavity (RV)** - Class 3 (Blue)
 
-The suite automates the identification of **End-Diastole (ED)** and **End-Systole (ES)** cardiac phases, computes volumetric time-series curves, calculates functional biomarkers (ejection fraction **EF %**, stroke volume **SV**, and myocardial mass), and exports research figures, summary reports, and animated cine loops.
+The suite automates the identification of **End-Diastole (ED)** and **End-Systole (ES)** cardiac phases, computes volumetric time-series curves, calculates functional biomarkers (ejection fraction **EF %**, stroke volume **SV**, and myocardial mass), and provides an interactive **Manual Segmentation Correction & Topology Editor** with real-time biomarker recalculation.
 
 ---
 
@@ -56,10 +58,11 @@ The suite automates the identification of **End-Diastole (ED)** and **End-Systol
 
 - **High-Performance 4D Cine Playback**: Smooth time-series cine loop playback with adjustable framerate (FPS), scrub bars, play/pause controls, and slice indexing.
 - **Multi-View Modes**:
-  - **Single Slice View**: High-detail slice-by-slice inspection with overlay masks and interactive zoom/pan.
-  - **2x2 Multi-Phase View**: Simultaneous side-by-side comparison of multiple cardiac phases.
-  - **Full Slice Mosaic**: Complete spatial anatomical coverage across all Z-slices.
-- **Automated AI Segmentation**: In-memory deep learning inference utilizing the pre-trained weights (`models/model_resnet34_unet_scratch_best_dice.pt`). Supports CPU and NVIDIA CUDA GPU execution.
+  - **Single Slice View & Volumetric Curves**: High-detail slice inspection with overlay masks, interactive zoom/pan, and synchronized volume curves in milliliters (mL).
+  - **Cardiac Mosaic Grid**: Simultaneous multi-phase comparison (ED vs ES) and full spatial coverage across all Z-slices.
+  - **Segmentation Correction (Manual Refinement)**: Interactive drawing and topology editing workstation tab.
+- **Automated AI Segmentation**: In-memory deep learning inference utilizing pre-trained weights (`models/model_resnet34_unet_scratch_best_dice.pt`). Supports CPU and NVIDIA CUDA GPU execution.
+- **Interactive Manual Segmentation Correction**: Full suite of manual refinement tools (Brush, Eraser, Flood Fill, Morphological filters, Undo/Redo, Slice Copy) with live quantitative recalculation.
 - **Automated Cardiac Phase Detection**: Automatic extraction of peak expansion (ED) and peak contraction (ES) from time-series volume curves.
 - **Quantitative Cardiac Biomarkers Calculation**:
   - Left & Right Ventricle Ejection Fraction (LV EF %, RV EF %)
@@ -67,11 +70,99 @@ The suite automates the identification of **End-Diastole (ED)** and **End-Systol
   - End-Diastolic Volume (EDV in mL) & End-Systolic Volume (ESV in mL)
   - Myocardial Mass (in grams, using standard myocardial density of 1.05 g/cm³)
 - **Export & Reporting Options**:
-  - Segmented 4D Dataset (`.mat`)
+  - Segmented 4D Dataset (`.mat`) and companion ED/ES masks
   - Formatted Quantification Summary Report (`.txt`)
   - Volumetric Time-Series Curves (`.csv`)
   - High-Resolution Viewport Figures (`.png`, `.jpg`)
   - Animated Cine-loops (`.gif`)
+
+---
+
+## Interactive Manual Segmentation Correction & Topology Editor
+
+VENTSEG 4D features a dedicated **Manual Segmentation Correction & Topology Editor** (accessible via **Tab 3**, shortcut `Ctrl + T`, or toolbar button **"Correct Mask"**). This workstation allows researchers and imaging specialists to manually edit, refine, or delineate multi-class ventricular masks on any slice and cardiac phase.
+
+<div align="center">
+  <img src="images/Main_Windows.png" alt="Segmentation Correction Workstation" width="90%" />
+</div>
+
+### 1. Multi-Class Anatomical Structure Selection
+Select the target anatomical compartment using dedicated radio buttons:
+- **LV Cavity / Endocardium (Label 1 - Red)**: Left ventricular blood pool.
+- **LV Myocardium (Label 2 - Green)**: Myocardial muscle wall.
+- **RV Cavity (Label 3 - Blue)**: Right ventricular blood pool.
+- **Background / Eraser (Label 0)**: Void / non-cardiac tissue.
+
+### 2. Interactive Tool Modes
+- **Brush (Paint)**: Continuous freehand drawing with anti-gap stroke interpolation.
+- **Eraser**: Precise carving and removal of segmented voxels.
+  > [!TIP]
+  > **Quick Eraser Shortcut**: Clicking with the **Right Mouse Button** activates the eraser instantly at any time, regardless of the currently selected tool.
+- **Bucket Fill (Flood Fill)**: Fast connected-component region filling (`scipy.ndimage.label`) for entire cavity chambers or background regions in a single click.
+
+### 3. Smart Cardiac Topology Engine
+When **Smart Cardiac Topology** is active (enabled by default):
+- **Clean Structure Overwriting**: Painting a new label cleanly replaces overlapping classes without invalid label collisions.
+- **LV Cavity Carving & Auto-Myocardial Expansion**: Erasing pixels from the internal LV cavity boundary automatically causes the adjacent Myocardium (Class 2) to expand and seal the carved border, maintaining anatomical wall continuity.
+- **Dual-Wall Myocardial Trimming**:
+  - Erasing the *inner* myocardial wall (closer to the LV lumen) automatically expands the LV cavity (Class 1).
+  - Erasing the *outer* myocardial wall (closer to the background) trims the mask to background (Class 0).
+
+### 4. Morphological & Correction Utilities
+- **Fill Holes (`Fill Holes`)**: Automatically closes and fills all internal lacunae/holes within the selected class or across all classes (`scipy.ndimage.binary_fill_holes`).
+- **Clean Islands (`Clean Islands`)**: Applies connected-component labeling (`scipy.ndimage.label`) to eliminate disconnected spurious noise specks, retaining only the primary anatomical structure.
+- **Smooth Contours (`Smooth`)**: Applies morphological binary opening and closing filters to regularize contour boundaries and remove pixelated artifacts.
+- **Multi-Slice Mask Propagation (`Copy ◀ Slice` / `Copy Slice ▶`)**: Copies the complete segmentation mask from adjacent Z-slices (previous or next) to the current slice, accelerating multi-slice contouring.
+- **Clear Slice Mask**: Wipes the mask on the active slice to start fresh.
+- **Revert Slice**: Restores the active slice mask to its state before current editing session.
+
+### 5. Brush Configuration & Visual Feedback
+- **Brush Radius Slider & SpinBox**: Adjustable brush radius from `1 px` to `40 px`.
+- **Brush Shape**: Choose between **Circle** (isotropic) and **Square** brush geometries.
+- **Mask Opacity**: Interactive transparency slider ($10\%$ to $100\%$) for clear visualization of underlying myocardium textures.
+- **Live Animated Cursor**: Responsive dashed circular/square reticle reflecting the exact brush diameter and active mode color (`Cyan` for paint, `Coral` for eraser).
+- **Voxel Inspector Status Bar**: Live display of cursor coordinates `[Row, Col]`, grayscale image intensity, and current voxel mask label.
+
+### 6. Deep Undo / Redo Architecture
+- Integrated **40-level deep history stack** (`Ctrl + Z` to Undo, `Ctrl + Y` to Redo) per slice session, ensuring safe and reversible manual editing.
+
+### 7. Live Quantitative Clinical Biomarker Recalculation
+Every brush stroke, morphological operation, or slice propagation instantly triggers:
+- **Active 2D Slice Area**: Real-time display of area in $\text{cm}^2$ and pixel counts for LV, MYO, and RV based on physical voxel calibration.
+- **Global 3D/4D Clinical Parameters**: Instant recomputation of End-Diastolic Volume (**EDV** in mL), End-Systolic Volume (**ESV** in mL), Stroke Volume (**SV** in mL), Ejection Fraction (**EF %**), and Myocardial Mass (in grams). All updated parameters are synchronized in real time with the main volumetric curves.
+
+### 8. Saving & Exporting Corrected Masks
+- **Save Corrected Mask (.mat)**: Saves the complete 4D matrix `segmentation_all_phases.mat` along with physical `voxel_size`, `ed_phase`, and `es_phase` metadata. It also automatically exports synchronized companion files `segmentation_ED.mat` and `segmentation_ES.mat`.
+- **Export Slice Snapshot (PNG / JPG)**: Exports high-resolution, publication-ready snapshots of the corrected slice with medical colormaps and segmentation overlays.
+
+---
+
+## Keyboard Shortcuts & Quick Navigation
+
+| Shortcut | Action |
+| :--- | :--- |
+| **Ctrl + O** | Open 4D medical imaging dataset (`.mat`, `.nii`, `.npy`) |
+| **Ctrl + M** | Load companion segmentation mask (`.mat`, `.nii`) |
+| **Ctrl + R** | AI Cardiac Quantification & Deep Learning Segmentation (ResNet34-UNet) |
+| **Ctrl + T** | Open **Manual Segmentation Correction & Topology Editor** (Tab 3) |
+| **Ctrl + K** | Open Spatial Calibration & Physical Voxel Size dialog ($dx, dy, dz$ in mm) |
+| **Ctrl + Shift + S** | Save all results (MAT masks, clinical TXT report, CSV curves, figures, GIF) |
+| **Ctrl + S** | Export current viewport snapshot as high-resolution PNG |
+| **Ctrl + G** | Export animated cardiac cine-loop as GIF |
+| **Ctrl + B** | Toggle Sidebar control panel (Hide / Show) |
+| **Ctrl + Z** | **Undo** last brush stroke / manual edit |
+| **Ctrl + Y** | **Redo** previously undone action |
+| **Space** | Play / Pause 4D Cine playback |
+| **Left / Right Arrow** | Previous / Next cardiac phase |
+| **Up / Down Arrow** | Next / Previous spatial Z-slice |
+| **Mouse Scroll Wheel** | Scroll through spatial Z-slices on drawing canvas |
+| **Right Mouse Click** | Quick Eraser (active drawing canvas) |
+| **E** | Jump to End-Diastole phase (**ED**) |
+| **S** | Jump to End-Systole phase (**ES**) |
+| **U** | Toggle volume display units (**mL** $\leftrightarrow$ **Voxels**) |
+| **M** | Toggle segmentation mask overlay visibility |
+| **R** | Reset brightness and contrast (Window/Level) |
+| **Ctrl + Q** | Exit application |
 
 ---
 
@@ -223,9 +314,9 @@ python viewer_4d.py path/to/image_SA.mat
 
 ```text
 ventseg/
-├── viewer_4d.py                 # Main PyQt6 GUI and application logic
+├── viewer_4d.py                 # Main PyQt6 GUI, 4D workstation & correction editor
 ├── requirements.txt             # Python dependencies
-├── README.md                    # Detailed documentation and guide
+├── README.md                    # Detailed documentation and user guide
 ├── readme.txt                   # Plaintext quick-start reference
 ├── images/
 │   ├── Logo.png                 # Application logo (PNG)
@@ -265,7 +356,7 @@ The application performs automated segmentation using a 2D ResNet34-UNet model e
   - NIfTI images (`.nii`, `.nii.gz`).
   - NumPy arrays (`.npy`, `.npz`).
 - **Export Formats**:
-  - MATLAB `.mat` workspace containing raw volumes, segmentation masks, and metrics.
+  - Corrected MATLAB `.mat` workspace (`segmentation_all_phases.mat`, `segmentation_ED.mat`, `segmentation_ES.mat`) containing raw volumes, multi-class segmentation masks, calibrated physical voxel dimensions, and clinical phase markers.
   - Formatted text report (`.txt`) with metadata and calculated quantitative results.
   - Volumetric time curves (`.csv`).
   - High-resolution figures (`.png`, `.jpg`).
@@ -307,7 +398,7 @@ This research and its software developments were funded and supported by the Nat
 
 ## AI-Assisted Interface Engineering
 
-The modern interactive user interface, multi-view 4D cine rendering architecture, physical voxel calibration system, quantification reporting suite, and high-performance workflow engineering of this software were developed and enhanced with the assistance of **Google Antigravity**, leveraging advanced agentic AI coding capabilities for medical and scientific application design.
+The modern interactive user interface, multi-view 4D cine rendering architecture, physical voxel calibration system, quantification reporting suite, manual segmentation correction and topology editor, and high-performance workflow engineering of this software were developed and enhanced with the assistance of **Google Antigravity**, leveraging advanced agentic AI coding capabilities for medical and scientific application design.
 
 ---
 

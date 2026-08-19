@@ -27,7 +27,7 @@ Key Capabilities:
   - High-occupancy multi-view cardiac mosaic (Cardiac Cycle Phase Grid, Z-Stack, and ED vs ES Comparator).
   - Visual ED/ES key-phase markers and synchronized interactive navigation.
   - Multi-class segmentation overlay (LV: Red, MYO: Green, RV: Blue) with opacity control.
-  - Window/Level (W/L) brightness & contrast presets, medical colormaps, and high-resolution export (PNG, GIF, CSV, TXT, MAT).
+  - Window/Level (W/L) briagyghtness & contrast presets, medical colormaps, and high-resolution export (PNG, GIF, CSV, TXT, MAT).
 ================================================================================
 """
 
@@ -37,6 +37,7 @@ import time
 import re
 import numpy as np
 import scipy.io
+import scipy.ndimage as ndi
 
 try:
     import nibabel as nib
@@ -399,6 +400,26 @@ QCheckBox::indicator:checked, QRadioButton::indicator:checked {
 QScrollArea {
     border: none;
     background-color: transparent;
+}
+
+QSplitter::handle {
+    background-color: #2d313e;
+}
+
+QSplitter::handle:horizontal {
+    width: 6px;
+}
+
+QSplitter::handle:vertical {
+    height: 6px;
+}
+
+QSplitter::handle:hover {
+    background-color: #007acc;
+}
+
+QSplitter::handle:pressed {
+    background-color: #0098ff;
 }
 """
 
@@ -1765,6 +1786,1141 @@ class MultiSliceGridWidget(QWidget):
 
 
 # ==============================================================================
+# INTERACTIVE SEGMENTATION CORRECTION & TOPOLOGY EDITOR CANVAS
+# ==============================================================================
+class SegmentationCorrectionCanvas(FigureCanvasQTAgg):
+    """Interactive drawing canvas for manual segmentation correction and morphological editing."""
+
+    pixel_hovered = pyqtSignal(int, int, float, int)  # row, col, intensity, mask_label
+    slice_scroll_requested = pyqtSignal(int)          # delta (+1 or -1)
+    mask_changed = pyqtSignal()                       # emitted when mask is modified
+
+    def __init__(self, parent=None):
+        self.fig = Figure(facecolor='#1a1b22')
+        super().__init__(self.fig)
+        self.setParent(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setMinimumSize(100, 100)
+
+        self.ax = self.fig.add_subplot(1, 1, 1)
+        self.img_artist = None
+        self.mask_artist = None
+        self.cursor_patch = None
+
+        self.slice_data = None
+        self.mask_slice = None
+        self.is_drawing = False
+        self.last_coord = None
+
+        self.brush_radius = 5
+        self.brush_shape = "circle"  # "circle" or "square"
+        self.active_label = 1        # 1: LV (Red), 2: MYO (Green), 3: RV (Blue), 0: Background
+        self.tool_mode = "brush"     # "brush", "eraser", "fill"
+        self.smart_topology = True
+        self.mask_alpha = 0.45
+        self.show_cursor = True
+
+        self.vmin = 0.0
+        self.vmax = 1.0
+        self.cmap_name = 'bone'
+
+        self.undo_stack = []
+        self.redo_stack = []
+        self.max_undo_depth = 40
+
+        self.setup_empty_view()
+
+        self.mpl_connect('button_press_event', self.on_button_press)
+        self.mpl_connect('motion_notify_event', self.on_motion_notify)
+        self.mpl_connect('button_release_event', self.on_button_release)
+        self.mpl_connect('scroll_event', self.on_scroll)
+        self.mpl_connect('axes_leave_event', self.on_axes_leave)
+
+    def setup_empty_view(self):
+        self.ax.clear()
+        self.ax.set_facecolor('#13141a')
+        self.ax.set_xticks([])
+        self.ax.set_yticks([])
+        for spine in self.ax.spines.values():
+            spine.set_color('#2d313e')
+        self.ax.text(
+            0.5, 0.5,
+            "VENTSEG - Segmentation Correction & Editor\n\n"
+            "Open a 4D medical dataset and navigate slices\n"
+            "to manually refine or draw ventricular masks (LV, MYO, RV).",
+            horizontalalignment='center', verticalalignment='center',
+            transform=self.ax.transAxes, color='#8f9ba8', fontsize=11,
+            bbox=dict(boxstyle='round,pad=0.8', facecolor='#21242d', edgecolor='#3b4252', alpha=0.9)
+        )
+        self.ax.set_title("Segmentation Correction (No Image Loaded)", color='#4da8da', fontsize=11, pad=6, fontweight='bold')
+        self.fig.subplots_adjust(left=0.04, right=0.96, top=0.94, bottom=0.04)
+        self.draw_idle()
+
+    def update_display(self, slice_data, mask_slice, vmin, vmax, cmap_name, mask_alpha, title_str=""):
+        self.slice_data = slice_data
+        self.mask_slice = mask_slice
+        self.vmin = vmin
+        self.vmax = vmax
+        self.cmap_name = cmap_name
+        self.mask_alpha = mask_alpha
+
+        if slice_data is None:
+            self.setup_empty_view()
+            return
+
+        seg_colors = [
+            (0.0, 0.0, 0.0, 0.0),
+            (1.0, 0.25, 0.25, self.mask_alpha),  # 1: LV Cavity (Red)
+            (0.2, 0.85, 0.35, self.mask_alpha),  # 2: Myocardium (Green)
+            (0.2, 0.6, 1.0, self.mask_alpha)     # 3: RV Cavity (Blue)
+        ]
+        seg_cmap = ListedColormap(seg_colors)
+
+        if self.img_artist is None:
+            self.ax.clear()
+            self.ax.set_facecolor('#13141a')
+            self.ax.tick_params(colors='#8f9ba8', labelsize=8.5)
+            for spine in self.ax.spines.values():
+                spine.set_color('#2d313e')
+
+            self.img_artist = self.ax.imshow(
+                slice_data, cmap=cmap_name, vmin=vmin, vmax=vmax,
+                interpolation='bilinear', origin='upper'
+            )
+            if mask_slice is not None:
+                self.mask_artist = self.ax.imshow(
+                    mask_slice, cmap=seg_cmap, vmin=0, vmax=3,
+                    interpolation='nearest', origin='upper'
+                )
+            else:
+                self.mask_artist = None
+
+            self.fig.subplots_adjust(left=0.04, right=0.96, top=0.94, bottom=0.04)
+        else:
+            self.img_artist.set_data(slice_data)
+            self.img_artist.set_clim(vmin=vmin, vmax=vmax)
+            self.img_artist.set_cmap(cmap_name)
+
+            if mask_slice is not None:
+                if self.mask_artist is None:
+                    self.mask_artist = self.ax.imshow(
+                        mask_slice, cmap=seg_cmap, vmin=0, vmax=3,
+                        interpolation='nearest', origin='upper'
+                    )
+                else:
+                    self.mask_artist.set_data(mask_slice)
+                    self.mask_artist.set_cmap(seg_cmap)
+                    self.mask_artist.set_visible(True)
+            elif self.mask_artist is not None:
+                self.mask_artist.set_visible(False)
+
+        if title_str:
+            self.ax.set_title(title_str, color='#4da8da', fontsize=10.5, fontweight='bold', pad=4)
+
+        self.draw_idle()
+
+    def refresh_mask_only(self):
+        if self.mask_artist is not None and self.mask_slice is not None:
+            self.mask_artist.set_data(self.mask_slice)
+            self.draw_idle()
+
+    def push_undo(self):
+        if self.mask_slice is not None:
+            self.undo_stack.append(self.mask_slice.copy())
+            if len(self.undo_stack) > self.max_undo_depth:
+                self.undo_stack.pop(0)
+            self.redo_stack.clear()
+
+    def undo(self):
+        if self.undo_stack and self.mask_slice is not None:
+            self.redo_stack.append(self.mask_slice.copy())
+            prev = self.undo_stack.pop()
+            np.copyto(self.mask_slice, prev)
+            self.refresh_mask_only()
+            self.mask_changed.emit()
+
+    def redo(self):
+        if self.redo_stack and self.mask_slice is not None:
+            self.undo_stack.append(self.mask_slice.copy())
+            nxt = self.redo_stack.pop()
+            np.copyto(self.mask_slice, nxt)
+            self.refresh_mask_only()
+            self.mask_changed.emit()
+
+    def apply_brush_at_point(self, r, c, label, mode, smart_topology, radius, shape):
+        if self.mask_slice is None:
+            return
+        h, w = self.mask_slice.shape
+        if not (0 <= r < h and 0 <= c < w):
+            return
+
+        r_min = max(0, r - radius)
+        r_max = min(h, r + radius + 1)
+        c_min = max(0, c - radius)
+        c_max = min(w, c + radius + 1)
+
+        sub_mask = self.mask_slice[r_min:r_max, c_min:c_max]
+        y, x = np.ogrid[r_min:r_max, c_min:c_max]
+
+        if shape == "circle":
+            brush_area = ((x - c)**2 + (y - r)**2) <= (radius**2)
+        else:
+            brush_area = np.ones((r_max - r_min, c_max - c_min), dtype=bool)
+
+        if not np.any(brush_area):
+            return
+
+        if mode == "paint":
+            # Paint selected label, cleanly overwriting any overlapping structure
+            sub_mask[brush_area] = label
+        elif mode == "erase":
+            target_erase = label if label != 0 else None
+            if target_erase is not None:
+                erase_pixels = brush_area & (sub_mask == target_erase)
+            else:
+                erase_pixels = brush_area & (sub_mask > 0)
+
+            if not np.any(erase_pixels):
+                return
+
+            if smart_topology:
+                if target_erase == 1:
+                    # Carving LV Cavity: adjacent/surrounding Myocardium (2) expands to fill the erased cavity border
+                    full_myo = (self.mask_slice == 2)
+                    if np.any(full_myo):
+                        dilated_myo = ndi.binary_dilation(full_myo, iterations=max(3, radius + 2))
+                        sub_dilated_myo = dilated_myo[r_min:r_max, c_min:c_max]
+                        to_myo = erase_pixels & sub_dilated_myo
+                        sub_mask[to_myo] = 2
+                        sub_mask[erase_pixels & (~to_myo)] = 0
+                    else:
+                        sub_mask[erase_pixels] = 0
+                elif target_erase == 2:
+                    # Erasing Myocardium:
+                    # Inner wall (closer to LV) -> expands LV Cavity (1)
+                    # Outer wall (closer to Background) -> trims to Background (0)
+                    full_lv = (self.mask_slice == 1)
+                    full_bg = (self.mask_slice == 0)
+                    if np.any(full_lv):
+                        d_lv = ndi.distance_transform_edt(~full_lv)[r_min:r_max, c_min:c_max]
+                        d_bg = ndi.distance_transform_edt(~full_bg)[r_min:r_max, c_min:c_max]
+                        to_lv = erase_pixels & (d_lv <= d_bg)
+                        sub_mask[to_lv] = 1
+                        sub_mask[erase_pixels & (~to_lv)] = 0
+                    else:
+                        sub_mask[erase_pixels] = 0
+                else:
+                    sub_mask[erase_pixels] = 0
+            else:
+                sub_mask[erase_pixels] = 0
+
+    def apply_stroke(self, r0, c0, r1, c1, label, mode):
+        dist = int(np.hypot(r1 - r0, c1 - c0))
+        n_steps = max(1, dist * 2)
+        rs = np.linspace(r0, r1, n_steps).round().astype(int)
+        cs = np.linspace(c0, c1, n_steps).round().astype(int)
+        for r, c in zip(rs, cs):
+            self.apply_brush_at_point(
+                r, c, label=label, mode=mode,
+                smart_topology=self.smart_topology,
+                radius=self.brush_radius,
+                shape=self.brush_shape
+            )
+
+    def apply_flood_fill(self, seed_r, seed_c, fill_label):
+        if self.mask_slice is None:
+            return
+        h, w = self.mask_slice.shape
+        if not (0 <= seed_r < h and 0 <= seed_c < w):
+            return
+
+        target_val = self.mask_slice[seed_r, seed_c]
+        if target_val == fill_label:
+            return
+
+        self.push_undo()
+        matching = (self.mask_slice == target_val)
+        labeled, _ = ndi.label(matching)
+        seed_id = labeled[seed_r, seed_c]
+        if seed_id > 0:
+            self.mask_slice[labeled == seed_id] = fill_label
+            self.refresh_mask_only()
+            self.mask_changed.emit()
+
+    def fill_holes(self, label=None):
+        if self.mask_slice is None:
+            return
+        self.push_undo()
+        labels_to_process = [label] if label in (1, 2, 3) else [1, 2, 3]
+        for l in labels_to_process:
+            binary = (self.mask_slice == l)
+            if np.any(binary):
+                filled = ndi.binary_fill_holes(binary)
+                holes = filled & (~binary)
+                if np.any(holes):
+                    self.mask_slice[holes] = l
+        self.refresh_mask_only()
+        self.mask_changed.emit()
+
+    def clean_stray_islands(self, label=None):
+        if self.mask_slice is None:
+            return
+        self.push_undo()
+        labels_to_clean = [label] if label in (1, 2, 3) else [1, 2, 3]
+        for l in labels_to_clean:
+            binary = (self.mask_slice == l)
+            if np.any(binary):
+                labeled, num_features = ndi.label(binary)
+                if num_features > 1:
+                    sizes = ndi.sum(binary, labeled, range(1, num_features + 1))
+                    largest = np.argmax(sizes) + 1
+                    self.mask_slice[binary & (labeled != largest)] = 0
+        self.refresh_mask_only()
+        self.mask_changed.emit()
+
+    def smooth_contours(self, label=None):
+        if self.mask_slice is None:
+            return
+        self.push_undo()
+        labels_to_smooth = [label] if label in (1, 2, 3) else [1, 2, 3]
+        for l in labels_to_smooth:
+            binary = (self.mask_slice == l)
+            if np.any(binary):
+                smoothed = ndi.binary_closing(
+                    ndi.binary_opening(binary, structure=np.ones((3, 3))),
+                    structure=np.ones((3, 3))
+                )
+                self.mask_slice[binary & (~smoothed)] = 0
+                self.mask_slice[smoothed & (self.mask_slice == 0)] = l
+        self.refresh_mask_only()
+        self.mask_changed.emit()
+
+    def update_cursor_patch(self, c, r):
+        if not self.show_cursor or self.slice_data is None:
+            if self.cursor_patch is not None:
+                self.cursor_patch.set_visible(False)
+                self.draw_idle()
+            return
+
+        rad = self.brush_radius
+        edge_color = '#00ffff' if self.tool_mode == 'brush' else '#ff6b6b'
+
+        if self.cursor_patch is None:
+            if self.brush_shape == 'circle':
+                self.cursor_patch = mpatches.Circle(
+                    (c, r), rad, fill=False, edgecolor=edge_color,
+                    linestyle='--', linewidth=1.2, alpha=0.85
+                )
+            else:
+                self.cursor_patch = mpatches.Rectangle(
+                    (c - rad, r - rad), rad * 2, rad * 2, fill=False,
+                    edgecolor=edge_color, linestyle='--', linewidth=1.2, alpha=0.85
+                )
+            self.ax.add_patch(self.cursor_patch)
+        else:
+            if self.brush_shape == 'circle':
+                if not isinstance(self.cursor_patch, mpatches.Circle):
+                    self.cursor_patch.remove()
+                    self.cursor_patch = mpatches.Circle(
+                        (c, r), rad, fill=False, edgecolor=edge_color,
+                        linestyle='--', linewidth=1.2, alpha=0.85
+                    )
+                    self.ax.add_patch(self.cursor_patch)
+                else:
+                    self.cursor_patch.center = (c, r)
+                    self.cursor_patch.set_radius(rad)
+                    self.cursor_patch.set_edgecolor(edge_color)
+                    self.cursor_patch.set_visible(True)
+            else:
+                if not isinstance(self.cursor_patch, mpatches.Rectangle):
+                    self.cursor_patch.remove()
+                    self.cursor_patch = mpatches.Rectangle(
+                        (c - rad, r - rad), rad * 2, rad * 2, fill=False,
+                        edgecolor=edge_color, linestyle='--', linewidth=1.2, alpha=0.85
+                    )
+                    self.ax.add_patch(self.cursor_patch)
+                else:
+                    self.cursor_patch.set_xy((c - rad, r - rad))
+                    self.cursor_patch.set_width(rad * 2)
+                    self.cursor_patch.set_height(rad * 2)
+                    self.cursor_patch.set_edgecolor(edge_color)
+                    self.cursor_patch.set_visible(True)
+
+        self.draw_idle()
+
+    def on_button_press(self, event):
+        if event.inaxes != self.ax or event.xdata is None or event.ydata is None or self.mask_slice is None:
+            return
+
+        c = int(round(event.xdata))
+        r = int(round(event.ydata))
+
+        # Check if right click -> quick eraser
+        if event.button == 3:
+            self.push_undo()
+            self.is_drawing = True
+            self.last_coord = (r, c)
+            self.apply_brush_at_point(
+                r, c, label=self.active_label, mode="erase",
+                smart_topology=self.smart_topology,
+                radius=self.brush_radius, shape=self.brush_shape
+            )
+            self.refresh_mask_only()
+            return
+
+        # Left click
+        if event.button == 1:
+            if self.tool_mode == "fill":
+                self.apply_flood_fill(r, c, self.active_label)
+                return
+
+            self.push_undo()
+            self.is_drawing = True
+            self.last_coord = (r, c)
+            effective_mode = "paint" if self.tool_mode == "brush" else "erase"
+            self.apply_brush_at_point(
+                r, c, label=self.active_label, mode=effective_mode,
+                smart_topology=self.smart_topology,
+                radius=self.brush_radius, shape=self.brush_shape
+            )
+            self.refresh_mask_only()
+
+    def on_motion_notify(self, event):
+        if event.inaxes != self.ax or event.xdata is None or event.ydata is None:
+            return
+
+        c = int(round(event.xdata))
+        r = int(round(event.ydata))
+
+        if self.slice_data is not None and 0 <= r < self.slice_data.shape[0] and 0 <= c < self.slice_data.shape[1]:
+            val = float(self.slice_data[r, c])
+            mask_v = int(self.mask_slice[r, c]) if self.mask_slice is not None else 0
+            self.pixel_hovered.emit(r, c, val, mask_v)
+
+        if self.is_drawing and self.last_coord is not None and self.mask_slice is not None:
+            effective_mode = "paint" if (self.tool_mode == "brush" and event.button == 1) else "erase"
+            self.apply_stroke(self.last_coord[0], self.last_coord[1], r, c, label=self.active_label, mode=effective_mode)
+            self.last_coord = (r, c)
+            self.refresh_mask_only()
+
+        self.update_cursor_patch(c, r)
+
+    def on_button_release(self, event):
+        if self.is_drawing:
+            self.is_drawing = False
+            self.last_coord = None
+            self.refresh_mask_only()
+            self.mask_changed.emit()
+
+    def on_axes_leave(self, event):
+        if self.cursor_patch is not None:
+            self.cursor_patch.set_visible(False)
+            self.draw_idle()
+
+    def on_scroll(self, event):
+        if event.step > 0:
+            self.slice_scroll_requested.emit(1)
+        elif event.step < 0:
+            self.slice_scroll_requested.emit(-1)
+
+
+# ==============================================================================
+# SEGMENTATION CORRECTION & TOPOLOGY EDITOR WIDGET
+# ==============================================================================
+class SegmentationEditorWidget(QWidget):
+    """Complete workstation tab for manual segmentation editing and anatomical topology correction."""
+
+    slice_changed = pyqtSignal(int)
+    phase_changed = pyqtSignal(int)
+    mask_updated = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.med_image = None
+        self.current_slice = 0
+        self.current_phase = 0
+        self.vmin = 0.0
+        self.vmax = 1.0
+        self.cmap_name = 'bone'
+
+        self.init_ui()
+
+    def init_ui(self):
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(4, 4, 4, 4)
+        main_layout.setSpacing(6)
+
+        # Splitter: Left Controls Subpanel | Right Drawing Canvas
+        self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setHandleWidth(6)
+        main_layout.addWidget(self.splitter)
+
+        # --- RIGHT CANVAS PANEL (Instantiated first so controls can wire callbacks) ---
+        canvas_container = QWidget()
+        canvas_layout = QVBoxLayout(canvas_container)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
+        canvas_layout.setSpacing(2)
+
+        # Top Control Bar over canvas (contains toggle subpanel button + Matplotlib Toolbar)
+        top_bar = QWidget()
+        top_bar_layout = QHBoxLayout(top_bar)
+        top_bar_layout.setContentsMargins(0, 0, 0, 0)
+        top_bar_layout.setSpacing(6)
+
+        self.btn_toggle_subpanel = QPushButton("◀ Hide Controls")
+        self.btn_toggle_subpanel.setToolTip("Show / Hide manual correction controls subpanel to maximize drawing area")
+        self.btn_toggle_subpanel.setMinimumHeight(26)
+        self.btn_toggle_subpanel.clicked.connect(self.toggle_subpanel)
+        top_bar_layout.addWidget(self.btn_toggle_subpanel)
+
+        self.canvas = SegmentationCorrectionCanvas(canvas_container)
+        self.canvas.slice_scroll_requested.connect(self.on_canvas_slice_scroll)
+        self.canvas.pixel_hovered.connect(self.on_pixel_hovered)
+        self.canvas.mask_changed.connect(self.on_canvas_mask_modified)
+
+        self.mpl_toolbar = NavigationToolbar2QT(self.canvas, canvas_container)
+        self.mpl_toolbar.setStyleSheet("background-color: #21242d; border: none; color: #eceff4;")
+        top_bar_layout.addWidget(self.mpl_toolbar, 1)
+
+        canvas_layout.addWidget(top_bar)
+        canvas_layout.addWidget(self.canvas, 1)
+
+        # Bottom status label
+        self.lbl_canvas_status = QLabel("Position: [Row: -, Col: -] | Intensity: - | Mask: Background (0)")
+        self.lbl_canvas_status.setStyleSheet("background-color: #13141a; color: #8f9ba8; padding: 3px 8px; border-top: 1px solid #21242d; font-size: 11.5px;")
+        canvas_layout.addWidget(self.lbl_canvas_status)
+
+        # --- LEFT CONTROLS SUBPANEL ---
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setMinimumWidth(280)
+        self.scroll_area.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        self.scroll_area.setStyleSheet("QScrollArea { border: 1px solid #2d313e; border-radius: 6px; background-color: #1a1b22; }")
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        panel_widget = QWidget()
+        panel_layout = QVBoxLayout(panel_widget)
+        panel_layout.setContentsMargins(6, 6, 6, 6)
+        panel_layout.setSpacing(8)
+
+        # 1. Navigation Group (Phase & Slice)
+        panel_layout.addWidget(self.create_navigation_group())
+
+        # 2. Target Structure Selection (Radio Buttons)
+        panel_layout.addWidget(self.create_structure_group())
+
+        # 3. Tool Mode & Brush Settings
+        panel_layout.addWidget(self.create_brush_settings_group())
+
+        # 4. Morphological & Editing Actions
+        panel_layout.addWidget(self.create_action_tools_group())
+
+        # 5. Live Quantitative Feedback (Area & Volume)
+        panel_layout.addWidget(self.create_metrics_feedback_group())
+
+        # 6. Save & Export
+        panel_layout.addWidget(self.create_save_export_group())
+
+        panel_layout.addStretch()
+        self.scroll_area.setWidget(panel_widget)
+
+        # Add to splitter: Left Subpanel (index 0), Right Canvas (index 1)
+        self.splitter.addWidget(self.scroll_area)
+        self.splitter.addWidget(canvas_container)
+        self.splitter.setCollapsible(0, False)
+        self.splitter.setCollapsible(1, False)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setSizes([340, 860])
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not hasattr(self, '_splitter_initialized'):
+            self._splitter_initialized = True
+            w = self.width()
+            if w > 500:
+                left_w = min(360, max(280, int(w * 0.3)))
+                self.splitter.setSizes([left_w, max(300, w - left_w)])
+
+    def toggle_subpanel(self):
+        """Toggle subpanel visibility to give more screen real-estate to the canvas."""
+        if self.scroll_area.isVisible():
+            self.scroll_area.hide()
+            self.btn_toggle_subpanel.setText("▶ Show Controls")
+        else:
+            self.scroll_area.show()
+            self.btn_toggle_subpanel.setText("◀ Hide Controls")
+            w = self.width()
+            left_w = min(360, max(280, int(w * 0.3)))
+            self.splitter.setSizes([left_w, max(400, w - left_w)])
+
+    def create_navigation_group(self):
+        group = QGroupBox("Cardiac Phase && Slice Selection")
+        layout = QVBoxLayout(group)
+        layout.setSpacing(6)
+
+        # Phase selection
+        phase_top = QHBoxLayout()
+        phase_top.addWidget(QLabel("<b>Phase:</b>"))
+        self.lbl_phase_badge = QLabel("1 / 1")
+        self.lbl_phase_badge.setObjectName("badgeLabel")
+        phase_top.addStretch()
+        self.lbl_phase_tag = QLabel("")
+        phase_top.addWidget(self.lbl_phase_tag)
+        phase_top.addWidget(self.lbl_phase_badge)
+        layout.addLayout(phase_top)
+
+        self.slider_phase = QSlider(Qt.Orientation.Horizontal)
+        self.slider_phase.setRange(0, 0)
+        self.slider_phase.valueChanged.connect(self.on_phase_slider_changed)
+        layout.addWidget(self.slider_phase)
+
+        phase_btns = QHBoxLayout()
+        phase_btns.setSpacing(4)
+        btn_phase_prev = QPushButton("◀ Prev")
+        btn_phase_prev.clicked.connect(lambda: self.set_phase(self.current_phase - 1))
+        btn_phase_next = QPushButton("Next ▶")
+        btn_phase_next.clicked.connect(lambda: self.set_phase(self.current_phase + 1))
+        self.btn_jump_ed = QPushButton("Jump ED")
+        self.btn_jump_ed.setObjectName("edButton")
+        self.btn_jump_ed.clicked.connect(self.jump_to_ed)
+        self.btn_jump_es = QPushButton("Jump ES")
+        self.btn_jump_es.setObjectName("esButton")
+        self.btn_jump_es.clicked.connect(self.jump_to_es)
+
+        for b in (btn_phase_prev, btn_phase_next, self.btn_jump_ed, self.btn_jump_es):
+            b.setMinimumHeight(24)
+            phase_btns.addWidget(b)
+        layout.addLayout(phase_btns)
+
+        # Slice selection
+        slice_top = QHBoxLayout()
+        slice_top.addWidget(QLabel("<b>Slice (Z-Stack):</b>"))
+        self.lbl_slice_badge = QLabel("1 / 1")
+        self.lbl_slice_badge.setObjectName("badgeLabel")
+        slice_top.addStretch()
+        slice_top.addWidget(self.lbl_slice_badge)
+        layout.addLayout(slice_top)
+
+        self.slider_slice = QSlider(Qt.Orientation.Horizontal)
+        self.slider_slice.setRange(0, 0)
+        self.slider_slice.valueChanged.connect(self.on_slice_slider_changed)
+        layout.addWidget(self.slider_slice)
+
+        slice_btns = QHBoxLayout()
+        slice_btns.setSpacing(4)
+        btn_slice_prev = QPushButton("◀ Prev")
+        btn_slice_prev.clicked.connect(lambda: self.set_slice(self.current_slice - 1))
+        btn_slice_mid = QPushButton("⏺ Mid")
+        btn_slice_mid.clicked.connect(self.go_to_mid_slice)
+        btn_slice_next = QPushButton("Next ▶")
+        btn_slice_next.clicked.connect(lambda: self.set_slice(self.current_slice + 1))
+
+        for b in (btn_slice_prev, btn_slice_mid, btn_slice_next):
+            b.setMinimumHeight(24)
+            slice_btns.addWidget(b)
+        layout.addLayout(slice_btns)
+
+        return group
+
+    def create_structure_group(self):
+        group = QGroupBox("Target Structure to Correct (Radio Buttons)")
+        layout = QVBoxLayout(group)
+        layout.setSpacing(6)
+
+        self.btn_group_structure = QButtonGroup(self)
+
+        self.rb_lv = QRadioButton("LV Cavity / Endocardium (Label 1)")
+        self.rb_lv.setStyleSheet("color: #ff6b6b; font-weight: bold;")
+        self.rb_lv.setChecked(True)
+        self.btn_group_structure.addButton(self.rb_lv, 1)
+
+        self.rb_myo = QRadioButton("LV Myocardium (Label 2)")
+        self.rb_myo.setStyleSheet("color: #51cf66; font-weight: bold;")
+        self.btn_group_structure.addButton(self.rb_myo, 2)
+
+        self.rb_rv = QRadioButton("RV Cavity (Right Ventricle - Label 3)")
+        self.rb_rv.setStyleSheet("color: #339af0; font-weight: bold;")
+        self.btn_group_structure.addButton(self.rb_rv, 3)
+
+        self.rb_bg = QRadioButton("Background / Eraser (Label 0)")
+        self.rb_bg.setStyleSheet("color: #94a3b8; font-weight: bold;")
+        self.btn_group_structure.addButton(self.rb_bg, 0)
+
+        self.btn_group_structure.idToggled.connect(self.on_structure_toggled)
+
+        layout.addWidget(self.rb_lv)
+        layout.addWidget(self.rb_myo)
+        layout.addWidget(self.rb_rv)
+        layout.addWidget(self.rb_bg)
+
+        return group
+
+    def create_brush_settings_group(self):
+        group = QGroupBox("Tool Mode && Brush Configuration")
+        layout = QVBoxLayout(group)
+        layout.setSpacing(6)
+
+        # Tool Mode
+        tool_row = QHBoxLayout()
+        self.btn_group_tool = QButtonGroup(self)
+
+        self.rb_tool_brush = QRadioButton("Brush (Paint)")
+        self.rb_tool_brush.setChecked(True)
+        self.btn_group_tool.addButton(self.rb_tool_brush, 0)
+
+        self.rb_tool_eraser = QRadioButton("Eraser")
+        self.btn_group_tool.addButton(self.rb_tool_eraser, 1)
+
+        self.rb_tool_fill = QRadioButton("Bucket Fill")
+        self.btn_group_tool.addButton(self.rb_tool_fill, 2)
+
+        self.btn_group_tool.idToggled.connect(self.on_tool_mode_toggled)
+
+        tool_row.addWidget(self.rb_tool_brush)
+        tool_row.addWidget(self.rb_tool_eraser)
+        tool_row.addWidget(self.rb_tool_fill)
+        layout.addLayout(tool_row)
+
+        # Brush Radius Slider + SpinBox
+        rad_row = QHBoxLayout()
+        rad_row.addWidget(QLabel("Brush Radius:"))
+        self.slider_brush_radius = QSlider(Qt.Orientation.Horizontal)
+        self.slider_brush_radius.setRange(1, 40)
+        self.slider_brush_radius.setValue(5)
+        self.slider_brush_radius.valueChanged.connect(self.on_brush_radius_changed)
+
+        self.spin_brush_radius = QSpinBox()
+        self.spin_brush_radius.setRange(1, 40)
+        self.spin_brush_radius.setValue(5)
+        self.spin_brush_radius.setSuffix(" px")
+        self.spin_brush_radius.valueChanged.connect(self.slider_brush_radius.setValue)
+
+        rad_row.addWidget(self.slider_brush_radius)
+        rad_row.addWidget(self.spin_brush_radius)
+        layout.addLayout(rad_row)
+
+        # Brush Shape & Mask Opacity
+        opt_row = QHBoxLayout()
+        opt_row.addWidget(QLabel("Shape:"))
+        self.combo_brush_shape = QComboBox()
+        self.combo_brush_shape.addItem("Circle", "circle")
+        self.combo_brush_shape.addItem("Square", "square")
+        self.combo_brush_shape.currentIndexChanged.connect(self.on_brush_shape_changed)
+        opt_row.addWidget(self.combo_brush_shape)
+
+        opt_row.addWidget(QLabel("Opacity:"))
+        self.slider_opacity = QSlider(Qt.Orientation.Horizontal)
+        self.slider_opacity.setRange(10, 100)
+        self.slider_opacity.setValue(45)
+        self.slider_opacity.valueChanged.connect(self.on_opacity_slider_changed)
+        opt_row.addWidget(self.slider_opacity)
+        layout.addLayout(opt_row)
+
+        # Smart Topology Checkbox
+        self.chk_smart_topology = QCheckBox("Smart Cardiac Topology (Auto-expand / Overwrite)")
+        self.chk_smart_topology.setToolTip(
+            "Smart Cardiac Topology:\n"
+            "• Painting overwrites overlapping structures automatically.\n"
+            "• Erasing LV Cavity automatically expands adjacent Myocardium to fill the carved border.\n"
+            "• Erasing inner Myocardium expands LV Cavity."
+        )
+        self.chk_smart_topology.setChecked(True)
+        self.chk_smart_topology.toggled.connect(self.on_smart_topology_toggled)
+        layout.addWidget(self.chk_smart_topology)
+
+        return group
+
+    def create_action_tools_group(self):
+        group = QGroupBox("Morphological && Correction Utilities")
+        layout = QVBoxLayout(group)
+        layout.setSpacing(5)
+
+        # Undo / Redo
+        undo_row = QHBoxLayout()
+        self.btn_undo = QPushButton("↩ Undo (Ctrl+Z)")
+        self.btn_undo.setToolTip("Undo last brush stroke on this slice")
+        self.btn_undo.clicked.connect(self.canvas.undo)
+
+        self.btn_redo = QPushButton("↪ Redo (Ctrl+Y)")
+        self.btn_redo.setToolTip("Redo previously undone action")
+        self.btn_redo.clicked.connect(self.canvas.redo)
+
+        undo_row.addWidget(self.btn_undo)
+        undo_row.addWidget(self.btn_redo)
+        layout.addLayout(undo_row)
+
+        # Morphological Filters
+        morph_row = QHBoxLayout()
+        btn_fill_holes = QPushButton("Fill Holes")
+        btn_fill_holes.setToolTip("Fill all enclosed holes inside segmented regions")
+        btn_fill_holes.clicked.connect(lambda: self.canvas.fill_holes(self.canvas.active_label))
+
+        btn_clean_islands = QPushButton("Clean Islands")
+        btn_clean_islands.setToolTip("Remove disconnected noise / keep largest connected component")
+        btn_clean_islands.clicked.connect(lambda: self.canvas.clean_stray_islands(self.canvas.active_label))
+
+        btn_smooth = QPushButton("Smooth")
+        btn_smooth.setToolTip("Morphologically smooth contour edges")
+        btn_smooth.clicked.connect(lambda: self.canvas.smooth_contours(self.canvas.active_label))
+
+        morph_row.addWidget(btn_fill_holes)
+        morph_row.addWidget(btn_clean_islands)
+        morph_row.addWidget(btn_smooth)
+        layout.addLayout(morph_row)
+
+        # Copy mask between slices / phases
+        copy_row = QHBoxLayout()
+        btn_copy_slice_prev = QPushButton("Copy ◀ Slice")
+        btn_copy_slice_prev.setToolTip("Copy segmentation mask from previous slice to current slice")
+        btn_copy_slice_prev.clicked.connect(lambda: self.copy_mask_from_slice(-1))
+
+        btn_copy_slice_next = QPushButton("Copy Slice ▶")
+        btn_copy_slice_next.setToolTip("Copy segmentation mask from next slice to current slice")
+        btn_copy_slice_next.clicked.connect(lambda: self.copy_mask_from_slice(1))
+
+        copy_row.addWidget(btn_copy_slice_prev)
+        copy_row.addWidget(btn_copy_slice_next)
+        layout.addLayout(copy_row)
+
+        # Clear & Revert
+        clear_row = QHBoxLayout()
+        btn_clear_slice = QPushButton("Clear Slice Mask")
+        btn_clear_slice.setToolTip("Clear mask on current slice to blank")
+        btn_clear_slice.clicked.connect(self.clear_current_slice_mask)
+
+        btn_revert_slice = QPushButton("Revert Slice")
+        btn_revert_slice.setToolTip("Discard all unsaved edits on this slice")
+        btn_revert_slice.clicked.connect(self.revert_current_slice)
+
+        clear_row.addWidget(btn_clear_slice)
+        clear_row.addWidget(btn_revert_slice)
+        layout.addLayout(clear_row)
+
+        return group
+
+    def create_metrics_feedback_group(self):
+        group = QGroupBox("Live Quantitative Clinical Feedback")
+        layout = QVBoxLayout(group)
+        layout.setSpacing(4)
+
+        self.lbl_slice_area_lv = QLabel("<b>LV Area:</b> -")
+        self.lbl_slice_area_myo = QLabel("<b>MYO Area:</b> -")
+        self.lbl_slice_area_rv = QLabel("<b>RV Area:</b> -")
+
+        self.lbl_global_edv_esv = QLabel("<b>Global LV EDV / ESV:</b> -")
+        self.lbl_global_ef_sv = QLabel("<b>Global LV EF / SV:</b> -")
+        self.lbl_global_mass = QLabel("<b>Myocardial Mass:</b> -")
+
+        for lbl in (self.lbl_slice_area_lv, self.lbl_slice_area_myo, self.lbl_slice_area_rv,
+                    self.lbl_global_edv_esv, self.lbl_global_ef_sv, self.lbl_global_mass):
+            lbl.setWordWrap(True)
+            layout.addWidget(lbl)
+
+        return group
+
+    def create_save_export_group(self):
+        group = QGroupBox("Save && Apply Corrections")
+        layout = QVBoxLayout(group)
+        layout.setSpacing(5)
+
+        btn_save_mat = QPushButton("Save Corrected Mask (.mat)...")
+        btn_save_mat.setObjectName("accentButton")
+        btn_save_mat.setMinimumHeight(28)
+        btn_save_mat.setToolTip("Save corrected 4D multi-phase mask to MATLAB .mat file")
+        btn_save_mat.clicked.connect(self.save_corrected_mask_to_mat)
+        layout.addWidget(btn_save_mat)
+
+        btn_export_png = QPushButton("Export Slice Snapshot (PNG)")
+        btn_export_png.clicked.connect(self.export_editor_snapshot)
+        layout.addWidget(btn_export_png)
+
+        return group
+
+    def load_context(self, med_image, current_slice, current_phase, vmin, vmax, cmap_name):
+        self.med_image = med_image
+        self.current_slice = current_slice
+        self.current_phase = current_phase
+        self.vmin = vmin
+        self.vmax = vmax
+        self.cmap_name = cmap_name
+
+        if self.med_image is None or self.med_image.data_4d is None:
+            self.canvas.setup_empty_view()
+            self.lbl_canvas_status.setText("No medical image dataset loaded.")
+            return
+
+        total_slices = self.med_image.num_slices
+        total_phases = self.med_image.num_phases
+
+        self.slider_slice.blockSignals(True)
+        self.slider_slice.setRange(0, total_slices - 1)
+        self.slider_slice.setValue(self.current_slice)
+        self.slider_slice.blockSignals(False)
+
+        self.slider_phase.blockSignals(True)
+        self.slider_phase.setRange(0, total_phases - 1)
+        self.slider_phase.setValue(self.current_phase)
+        self.slider_phase.blockSignals(False)
+
+        self.lbl_slice_badge.setText(f"{self.current_slice + 1} / {total_slices}")
+        self.lbl_phase_badge.setText(f"{self.current_phase + 1} / {total_phases}")
+
+        is_ed = (self.med_image.has_mask and self.current_phase == self.med_image.ed_phase)
+        is_es = (self.med_image.has_mask and self.current_phase == self.med_image.es_phase)
+
+        if is_ed:
+            self.lbl_phase_tag.setText("[END-DIASTOLE - ED]")
+            self.lbl_phase_tag.setStyleSheet("color: #51cf66; font-weight: bold; font-size: 11px;")
+        elif is_es:
+            self.lbl_phase_tag.setText("[END-SYSTOLE - ES]")
+            self.lbl_phase_tag.setStyleSheet("color: #ff6b6b; font-weight: bold; font-size: 11px;")
+        else:
+            self.lbl_phase_tag.setText("")
+
+        # Ensure mask_4d exists
+        if self.med_image.mask_4d is None:
+            self.med_image.mask_4d = np.zeros(
+                (self.med_image.num_rows, self.med_image.num_cols, total_slices, total_phases),
+                dtype=np.uint8
+            )
+
+        slice_data = self.med_image.get_slice_2d(self.current_slice, self.current_phase)
+        mask_slice = self.med_image.mask_4d[:, :, self.current_slice, self.current_phase]
+
+        title_str = f"Slice {self.current_slice + 1}/{total_slices}  |  Phase {self.current_phase + 1}/{total_phases}"
+        if is_ed:
+            title_str += "  [ED]"
+        elif is_es:
+            title_str += "  [ES]"
+
+        self.canvas.update_display(
+            slice_data=slice_data,
+            mask_slice=mask_slice,
+            vmin=self.vmin,
+            vmax=self.vmax,
+            cmap_name=self.cmap_name,
+            mask_alpha=self.canvas.mask_alpha,
+            title_str=title_str
+        )
+
+        self.update_live_metrics_feedback()
+
+    def set_slice(self, slice_idx):
+        if self.med_image is None:
+            return
+        slice_idx = max(0, min(slice_idx, self.med_image.num_slices - 1))
+        if slice_idx != self.current_slice:
+            self.current_slice = slice_idx
+            self.slider_slice.setValue(slice_idx)
+            self.slice_changed.emit(slice_idx)
+            self.load_context(self.med_image, self.current_slice, self.current_phase, self.vmin, self.vmax, self.cmap_name)
+
+    def go_to_mid_slice(self):
+        if self.med_image:
+            self.set_slice(self.med_image.num_slices // 2)
+
+    def set_phase(self, phase_idx):
+        if self.med_image is None:
+            return
+        phase_idx = max(0, min(phase_idx, self.med_image.num_phases - 1))
+        if phase_idx != self.current_phase:
+            self.current_phase = phase_idx
+            self.slider_phase.setValue(phase_idx)
+            self.phase_changed.emit(phase_idx)
+            self.load_context(self.med_image, self.current_slice, self.current_phase, self.vmin, self.vmax, self.cmap_name)
+
+    def jump_to_ed(self):
+        if self.med_image and self.med_image.has_mask:
+            self.set_phase(self.med_image.ed_phase)
+
+    def jump_to_es(self):
+        if self.med_image and self.med_image.has_mask:
+            self.set_phase(self.med_image.es_phase)
+
+    def on_slice_slider_changed(self, val):
+        self.set_slice(val)
+
+    def on_phase_slider_changed(self, val):
+        self.set_phase(val)
+
+    def on_canvas_slice_scroll(self, delta):
+        self.set_slice(self.current_slice + delta)
+
+    def on_structure_toggled(self, button_id, checked):
+        if checked:
+            self.canvas.active_label = button_id
+
+    def on_tool_mode_toggled(self, button_id, checked):
+        if checked:
+            modes = {0: "brush", 1: "eraser", 2: "fill"}
+            self.canvas.tool_mode = modes.get(button_id, "brush")
+
+    def on_brush_radius_changed(self, val):
+        self.canvas.brush_radius = val
+        self.spin_brush_radius.blockSignals(True)
+        self.spin_brush_radius.setValue(val)
+        self.spin_brush_radius.blockSignals(False)
+
+    def on_brush_shape_changed(self, idx):
+        self.canvas.brush_shape = self.combo_brush_shape.currentData()
+
+    def on_smart_topology_toggled(self, checked):
+        self.canvas.smart_topology = checked
+
+    def on_opacity_slider_changed(self, val):
+        self.canvas.mask_alpha = val / 100.0
+        self.canvas.update_display(
+            slice_data=self.canvas.slice_data,
+            mask_slice=self.canvas.mask_slice,
+            vmin=self.vmin,
+            vmax=self.vmax,
+            cmap_name=self.cmap_name,
+            mask_alpha=self.canvas.mask_alpha
+        )
+
+    def on_pixel_hovered(self, r, c, val, mask_val):
+        label_names = {0: "Background (0)", 1: "LV Cavity (1)", 2: "Myocardium (2)", 3: "RV Cavity (3)"}
+        lbl_str = label_names.get(mask_val, f"Label {mask_val}")
+        self.lbl_canvas_status.setText(f"Voxel: [Row: {r}, Col: {c}] | Intensity: {val:.2f} | Mask: {lbl_str}")
+
+    def on_canvas_mask_modified(self):
+        if self.med_image is not None and self.canvas.mask_slice is not None:
+            self.med_image.has_mask = (np.max(self.med_image.mask_4d) > 0)
+            self.med_image.recompute_metrics()
+            self.update_live_metrics_feedback()
+            self.mask_updated.emit()
+
+    def update_live_metrics_feedback(self):
+        if self.med_image is None:
+            return
+
+        if self.canvas.mask_slice is not None:
+            lv_px = np.sum(self.canvas.mask_slice == 1)
+            myo_px = np.sum(self.canvas.mask_slice == 2)
+            rv_px = np.sum(self.canvas.mask_slice == 3)
+            pix_area_cm2 = self.med_image.pixel_area_cm2
+
+            self.lbl_slice_area_lv.setText(
+                f"<b>LV Area:</b> <span style='color:#ff6b6b; font-weight:bold;'>{lv_px * pix_area_cm2:.2f} cm²</span> ({lv_px:,.0f} px)"
+            )
+            self.lbl_slice_area_myo.setText(
+                f"<b>MYO Area:</b> <span style='color:#51cf66; font-weight:bold;'>{myo_px * pix_area_cm2:.2f} cm²</span> ({myo_px:,.0f} px)"
+            )
+            self.lbl_slice_area_rv.setText(
+                f"<b>RV Area:</b> <span style='color:#339af0; font-weight:bold;'>{rv_px * pix_area_cm2:.2f} cm²</span> ({rv_px:,.0f} px)"
+            )
+
+        m = self.med_image.cardiac_metrics
+        if m and 'lv_ef' in m:
+            edv = m.get('lv_edv_ml', 0.0)
+            esv = m.get('lv_esv_ml', 0.0)
+            ef = m.get('lv_ef', 0.0)
+            sv = m.get('lv_sv_ml', 0.0)
+            mass = m.get('myo_mass_g', 0.0)
+
+            ef_color = "#51cf66" if ef >= 50.0 else ("#fcc419" if ef >= 40.0 else "#ff6b6b")
+
+            self.lbl_global_edv_esv.setText(f"<b>LV EDV:</b> {edv:.1f} mL  |  <b>ESV:</b> {esv:.1f} mL")
+            self.lbl_global_ef_sv.setText(
+                f"<b>LV EF:</b> <span style='color:{ef_color}; font-weight:bold;'>{ef:.1f}%</span>  |  <b>SV:</b> {sv:.1f} mL"
+            )
+            self.lbl_global_mass.setText(f"<b>Myocardial Mass:</b> <span style='color:#51cf66; font-weight:bold;'>{mass:.1f} g</span>")
+        else:
+            self.lbl_global_edv_esv.setText("<b>Global LV EDV / ESV:</b> -")
+            self.lbl_global_ef_sv.setText("<b>Global LV EF / SV:</b> -")
+            self.lbl_global_mass.setText("<b>Myocardial Mass:</b> -")
+
+    def copy_mask_from_slice(self, delta):
+        if self.med_image is None or self.med_image.mask_4d is None:
+            return
+        src_slice = self.current_slice + delta
+        if 0 <= src_slice < self.med_image.num_slices:
+            self.canvas.push_undo()
+            src_mask = self.med_image.mask_4d[:, :, src_slice, self.current_phase]
+            self.med_image.mask_4d[:, :, self.current_slice, self.current_phase] = src_mask.copy()
+            self.canvas.mask_slice = self.med_image.mask_4d[:, :, self.current_slice, self.current_phase]
+            self.canvas.refresh_mask_only()
+            self.on_canvas_mask_modified()
+
+    def clear_current_slice_mask(self):
+        if self.canvas.mask_slice is not None:
+            self.canvas.push_undo()
+            self.canvas.mask_slice[:] = 0
+            self.canvas.refresh_mask_only()
+            self.on_canvas_mask_modified()
+
+    def revert_current_slice(self):
+        if self.canvas.undo_stack:
+            first_state = self.canvas.undo_stack[0]
+            self.canvas.push_undo()
+            np.copyto(self.canvas.mask_slice, first_state)
+            self.canvas.refresh_mask_only()
+            self.on_canvas_mask_modified()
+
+    def save_corrected_mask_to_mat(self):
+        if self.med_image is None or self.med_image.mask_4d is None:
+            QMessageBox.warning(self, "No Mask", "No segmentation mask available to save.")
+            return
+
+        default_dir = os.path.dirname(os.path.abspath(self.med_image.filename)) if self.med_image.filename else os.getcwd()
+        default_name = os.path.join(default_dir, "segmentation_all_phases.mat")
+
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "Save Corrected Segmentation (.mat)", default_name, "MATLAB File (*.mat)"
+        )
+        if filepath:
+            try:
+                ed_p = self.med_image.ed_phase
+                es_p = self.med_image.es_phase
+                save_dict = {
+                    'segmentation_all_phases': self.med_image.mask_4d,
+                    'voxel_size': self.med_image.voxel_size,
+                    'ed_phase': ed_p + 1,
+                    'es_phase': es_p + 1
+                }
+                save_mat_dict(filepath, save_dict)
+
+                # Also save ED and ES companion files in same directory if requested
+                base_dir = os.path.dirname(os.path.abspath(filepath))
+                save_mat_dict(os.path.join(base_dir, "segmentation_ED.mat"), {
+                    'segmentation_ED': self.med_image.mask_4d[:, :, :, ed_p],
+                    'voxel_size': self.med_image.voxel_size,
+                    'ed_phase': ed_p + 1
+                })
+                save_mat_dict(os.path.join(base_dir, "segmentation_ES.mat"), {
+                    'segmentation_ES': self.med_image.mask_4d[:, :, :, es_p],
+                    'voxel_size': self.med_image.voxel_size,
+                    'es_phase': es_p + 1
+                })
+
+                QMessageBox.information(
+                    self, "Saved Successfully",
+                    f"Corrected segmentation mask saved successfully to:\n{filepath}\n\n"
+                    f"Generated companion files: segmentation_ED.mat, segmentation_ES.mat"
+                )
+            except Exception as e:
+                QMessageBox.critical(self, "Save Error", f"Failed to save corrected segmentation:\n{str(e)}")
+
+    def export_editor_snapshot(self):
+        if self.med_image is None:
+            return
+        default_dir = os.path.dirname(os.path.abspath(self.med_image.filename)) if self.med_image.filename else os.getcwd()
+        default_name = os.path.join(default_dir, f"slice_{self.current_slice + 1}_phase_{self.current_phase + 1}_corrected.png")
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "Export Slice Snapshot", default_name, "PNG Image (*.png);;JPEG Image (*.jpg)"
+        )
+        if filepath:
+            try:
+                self.canvas.fig.savefig(filepath, dpi=300, facecolor='#1a1b22', edgecolor='none')
+                QMessageBox.information(self, "Snapshot Saved", f"Slice capture saved to:\n{filepath}")
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", f"Failed to save snapshot:\n{str(e)}")
+
+
+# ==============================================================================
 # INTEGRATED NEURAL INFERENCE ENGINE (VENTSEG AI)
 # ==============================================================================
 def save_mat_dict(filepath, data_dict):
@@ -2831,8 +3987,15 @@ class VentSegViewer4D(QMainWindow):
         self.grid_view_widget.slice_selected.connect(self.on_grid_slice_selected)
         self.grid_view_widget.phase_selected.connect(self.on_grid_phase_selected)
 
+        # Tab 3: Segmentation Correction & Topology Editor
+        self.editor_widget = SegmentationEditorWidget(self)
+        self.editor_widget.slice_changed.connect(self.set_slice)
+        self.editor_widget.phase_changed.connect(self.set_phase)
+        self.editor_widget.mask_updated.connect(self.on_editor_mask_updated)
+
         self.tabs.addTab(single_view_widget, "Single View && Volumetric Curves (LV, RV, MYO in mL)")
         self.tabs.addTab(self.grid_view_widget, "Cardiac Mosaic (ED/ES Phases && Slices)")
+        self.tabs.addTab(self.editor_widget, "Segmentation Correction (Manual Refinement)")
         self.tabs.currentChanged.connect(self.on_tab_changed)
 
         center_layout.addWidget(self.tabs)
@@ -2958,6 +4121,11 @@ class VentSegViewer4D(QMainWindow):
         view_report_action.triggered.connect(self.show_clinical_report_dialog)
         seg_menu.addAction(view_report_action)
 
+        correct_seg_action = QAction("Manual Segmentation Correction (Tab 3)...", self)
+        correct_seg_action.setShortcut(QKeySequence("Ctrl+T"))
+        correct_seg_action.triggered.connect(lambda: self.tabs.setCurrentIndex(2))
+        seg_menu.addAction(correct_seg_action)
+
         # View Menu
         view_menu = menubar.addMenu("&View")
 
@@ -3042,6 +4210,11 @@ class VentSegViewer4D(QMainWindow):
         self.btn_tb_segment.setToolTip("Run neural segmentation and automated ventricular quantification (Ctrl+R)")
         self.btn_tb_segment.clicked.connect(self.show_segmentation_dialog)
         toolbar.addWidget(self.btn_tb_segment)
+
+        self.btn_tb_correct = QPushButton("Correct Mask")
+        self.btn_tb_correct.setToolTip("Open Manual Segmentation Correction & Topology Editor (Ctrl+T)")
+        self.btn_tb_correct.clicked.connect(lambda: self.tabs.setCurrentIndex(2))
+        toolbar.addWidget(self.btn_tb_correct)
 
         toolbar.addSeparator()
 
@@ -3507,6 +4680,7 @@ class VentSegViewer4D(QMainWindow):
         QShortcut(QKeySequence("U"), self, self.toggle_units_mode)
         QShortcut(QKeySequence("Ctrl+B"), self, self.toggle_sidebar)
         QShortcut(QKeySequence("Ctrl+R"), self, self.show_segmentation_dialog)
+        QShortcut(QKeySequence("Ctrl+T"), self, lambda: self.tabs.setCurrentIndex(2))
         QShortcut(QKeySequence("Ctrl+K"), self, self.open_voxel_size_dialog)
         QShortcut(QKeySequence("Ctrl+Shift+S"), self, self.export_all_results_to_folder)
 
@@ -4028,12 +5202,26 @@ class VentSegViewer4D(QMainWindow):
         QTimer.singleShot(60, self.update_views)
 
     def on_tab_changed(self, index):
-        if index == 1:
+        if index == 0:
+            self.update_views()
+        elif index == 1:
             self.grid_view_widget.update_grid(
                 self.med_image, self.current_slice, self.current_phase, self.vmin, self.vmax, self.cmap_name
             )
-        else:
-            self.update_views()
+        elif index == 2:
+            self.editor_widget.load_context(
+                self.med_image, self.current_slice, self.current_phase, self.vmin, self.vmax, self.cmap_name
+            )
+
+    def on_editor_mask_updated(self):
+        """Handler called whenever user edits a mask slice in the Segmentation Correction tab."""
+        if self.med_image is not None:
+            self.med_image.has_mask = (np.max(self.med_image.mask_4d) > 0)
+            self.med_image.recompute_metrics()
+            self.update_cardiac_metrics_ui()
+            if hasattr(self, 'btn_view_report'):
+                self.btn_view_report.setEnabled(self.med_image.has_mask)
+            self.status_bar.showMessage("Segmentation mask updated in real-time.", 2500)
 
     # ==========================================================================
     # UPDATE VIEWS AND UI METRICS
@@ -4066,8 +5254,12 @@ class VentSegViewer4D(QMainWindow):
                 total_phases=total_phases,
                 med_image=self.med_image
             )
-        else:
+        elif self.tabs.currentIndex() == 1:
             self.grid_view_widget.update_grid(
+                self.med_image, self.current_slice, self.current_phase, self.vmin, self.vmax, self.cmap_name
+            )
+        elif self.tabs.currentIndex() == 2:
+            self.editor_widget.load_context(
                 self.med_image, self.current_slice, self.current_phase, self.vmin, self.vmax, self.cmap_name
             )
 
@@ -4419,6 +5611,7 @@ class VentSegViewer4D(QMainWindow):
             "• <b>Ctrl + M:</b> Load segmentation mask<br>"
             "• <b>Ctrl + Shift + S:</b> Save all results to a directory<br>"
             "• <b>Ctrl + R:</b> AI Cardiac Quantification && Segmentation (ResNet34-UNet)<br>"
+            "• <b>Ctrl + T:</b> Manual Segmentation Correction && Topology Editor<br>"
             "• <b>Ctrl + K:</b> Spatial Calibration && Voxel Size (in mm)<br>"
             "• <b>U:</b> Toggle Volume Units (mL <-> Voxels)<br>"
             "• <b>Space:</b> Play / Pause Cardiac Cine<br>"

@@ -78,11 +78,15 @@ VENTSEG 4D - Cardiac Medical Image Viewer & AI Quantification Suite
    - Multi-View Visualization: Single slice view, 2x2 multi-phase mosaic, and full spatial grid.
    - Deep Learning AI Segmentation: Embedded ResNet34-UNet architecture for Left Ventricle (LV),
      Right Ventricle (RV), and Myocardium (MYO).
+   - Manual Segmentation Correction & Topology Editor: Tab 3 (Ctrl+T) interactive workstation
+     with Brush, Eraser, Flood Fill, smart cardiac topology preservation, morphological filters
+     (fill holes, clean islands, smooth), multi-slice propagation, 40-step undo/redo, and live
+     clinical biomarker updates.
    - Automatic Phase Detection: Automatic calculation of End-Diastole (ED) and End-Systole (ES).
    - Cardiac Quantification Metrics: Ejection Fraction (EF %), Stroke Volume (SV mL),
      End-Diastolic Volume (EDV mL), End-Systolic Volume (ESV mL), and Myocardial Mass (g).
    - Multi-Format Export:
-     * Segmented 4D Dataset (.mat)
+     * Segmented 4D Dataset (.mat) and companion ED/ES masks
      * Quantification Summary Report (.txt)
      * Volumetric Time-Series Curves (.csv)
      * Viewport High-Res Snapshots (.png, .jpg)
