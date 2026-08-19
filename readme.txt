@@ -14,9 +14,11 @@ VENTSEG 4D - Cardiac Medical Image Viewer & AI Quantification Suite
    - Hardware: CPU (x86_64) or NVIDIA GPU with CUDA support
 
 3. QUICK INSTALLATION & SETUP:
-   When moving or cloning this repository:
-
-   Windows (PowerShell):
+   If you don't have python 3.12 you need to install this version. 
+   Windows 
+     - Download and install from https://www.python.org/ftp/python/3.12.3/python-3.12.3-amd64.exe
+  
+   Open PowerShell of Cursor, Antigravity or Visual Studio and run:
      py -3.12 -m venv .venv
      .\.venv\Scripts\Activate.ps1
      pip install -r requirements.txt
@@ -31,6 +33,20 @@ VENTSEG 4D - Cardiac Medical Image Viewer & AI Quantification Suite
      source .venv/bin/activate
      pip install -r requirements.txt
 
+   -----------------------------------------------------------------------------
+   * NVIDIA GPU ACCELERATION (OPTIONAL BUT STRONGLY RECOMMENDED):
+   -----------------------------------------------------------------------------
+   By default, `pip install -r requirements.txt` installs the standard/CPU build.
+   To accelerate AI segmentation with an NVIDIA GPU:
+
+   A) Standard NVIDIA GPUs (RTX 20xx, 30xx, 40xx, GTX 16xx, Quadro, A100):
+      pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu124
+
+   B) Latest-Generation NVIDIA GPUs (Blackwell Architecture sm_120, RTX 50xx, RTX PRO Blackwell):
+      New Blackwell generation GPUs require CUDA 12.8+ builds to provide sm_120 binary kernels:
+      pip install --upgrade --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
+   -----------------------------------------------------------------------------
+
 4. DOWNLOAD PRE-TRAINED MODELS (GOOGLE DRIVE):
    Due to GitHub file size limits, the pre-trained neural network weights (~143 MB)
    are hosted on Google Drive:
@@ -39,14 +55,24 @@ VENTSEG 4D - Cardiac Medical Image Viewer & AI Quantification Suite
    Download the models folder and place it in the root directory:
    ventseg/models/model_resnet34_unet_scratch_best_dice.pt
 
-5. RUNNING THE APPLICATION:
+5. DOWNLOAD SAMPLE INPUT DATA (GOOGLE DRIVE):
+   An example input dataset is available on Google Drive:
+   https://drive.google.com/drive/folders/1bKaooRMNtSt7z_AWuwHUdUfG1jtCdl1k?usp=sharing
+
+   * Important: The voxel_size in the example file does NOT correspond to the
+     real physical acquisition voxel size. To obtain accurate volumes (mL), check
+     the real voxel size in the DICOM metadata and calibrate it either:
+     - Directly from the application GUI (Ctrl+K or "Spatial Calibration / Voxel Size")
+     - Directly in the MATLAB file (defining 'voxel_size = [dx, dy, dz]' in mm).
+
+6. RUNNING THE APPLICATION:
    - Launch the interactive viewer:
      python viewer_4d.py
 
    - Or launch directly loading a specific dataset (.mat or .nii):
      python viewer_4d.py path/to/dataset.mat
 
-6. KEY FEATURES:
+7. KEY FEATURES:
    - Multi-format Medical I/O: Supports 4D/3D MATLAB volumes (.mat) and NIfTI (.nii, .nii.gz).
    - Real-Time 4D Cine Playback: Cine loop animation with adjustable FPS, slice and phase sliders.
    - Multi-View Visualization: Single slice view, 2x2 multi-phase mosaic, and full spatial grid.
@@ -62,7 +88,7 @@ VENTSEG 4D - Cardiac Medical Image Viewer & AI Quantification Suite
      * Viewport High-Res Snapshots (.png, .jpg)
      * Animated Cine-loops (.gif)
 
-7. PROJECT DIRECTORY STRUCTURE:
+8. PROJECT DIRECTORY STRUCTURE:
    ├── viewer_4d.py          # Main PyQt6 GUI & application entry point
    ├── requirements.txt      # Python dependencies
    ├── README.md             # Complete documentation and user guide
@@ -74,7 +100,7 @@ VENTSEG 4D - Cardiac Medical Image Viewer & AI Quantification Suite
    ├── models/               # Downloaded from Google Drive (ResNet34-UNet weights .pt)
    └── utils/                # Data loader, normalization, augmentation & post-processing
 
-8. ACADEMIC PROVENANCE & RESEARCH GRANTS:
+9. ACADEMIC PROVENANCE & RESEARCH GRANTS:
    - Original Framework: https://github.com/JulioSoteloParraguez/VENTSEG-ventricular_segmentation_framework/tree/main
    - Developed by Alejandro León as part of his Master's thesis, guided by professors
      Dr. Julio Sotelo and Dr. Rodrigo Salas from Universidad de Valparaíso (Chile).
@@ -84,7 +110,7 @@ VENTSEG 4D - Cardiac Medical Image Viewer & AI Quantification Suite
      * ANID - Millennium Science Initiative Program - ICN2021 004
      * ANID FONDECYT research initiation FONDECYT #1221938
 
-9. AI-ASSISTED INTERFACE ENGINEERING:
+10. AI-ASSISTED INTERFACE ENGINEERING:
    - The interactive 4D workstation, PyQt6 graphical interface, real-time rendering
      engine, physical calibration system, and quantification reporting tools were developed
      and modernized with the assistance of Google Antigravity.

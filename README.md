@@ -127,7 +127,28 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-All required libraries (`PyQt6`, `torch`, `torchvision`, `albumentations`, `opencv-python`, `nibabel`, `numpy`, `scipy`, `matplotlib`, `imageio`, `Pillow`) will be installed automatically.
+All standard dependencies (`PyQt6`, `albumentations`, `opencv-python`, `nibabel`, `numpy`, `scipy`, `matplotlib`, `imageio`, `Pillow`) and base PyTorch will be installed.
+
+### 4. Enable NVIDIA GPU Acceleration (Recommended)
+
+By default, `pip install -r requirements.txt` installs the CPU build of PyTorch. If your system has an NVIDIA dedicated graphics card, enable hardware-accelerated segmentation by running the appropriate command:
+
+#### A. Standard NVIDIA GPUs (RTX 20xx, 30xx, 40xx, GTX 16xx, Quadro, Tesla, A100):
+```bash
+pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu124
+```
+
+#### B. Latest-Generation NVIDIA GPUs (Blackwell Architecture `sm_120`, RTX 50xx, RTX PRO Blackwell):
+Latest-generation NVIDIA GPUs built on the **Blackwell** architecture require CUDA 12.8+ binaries to supply native `sm_120` compute kernels:
+```bash
+pip install --upgrade --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
+```
+
+> [!TIP]
+> To verify that Python and PyTorch recognize your GPU, run:
+> ```bash
+> python -c "import torch; print('CUDA Available:', torch.cuda.is_available()); print('GPU Device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
+> ```
 
 ---
 
@@ -293,5 +314,6 @@ The modern interactive user interface, multi-view 4D cine rendering architecture
 ## Troubleshooting & FAQ
 
 - **Error: "Failed to import deep learning modules"**: Ensure your virtual environment is active and that the `models/` folder has been downloaded from Google Drive and placed in the project root (`.\.venv\Scripts\Activate.ps1` or `source .venv/bin/activate`).
-- **GPU vs CPU**: The application automatically detects available NVIDIA CUDA devices. If no CUDA-capable GPU is found, it automatically falls back to CPU computation.
+- **GPU vs CPU**: The application automatically detects available NVIDIA CUDA devices. If PyTorch was installed without CUDA support or if no CUDA GPU is detected, it falls back to CPU computation. To switch from CPU to GPU acceleration, follow the instructions in [Enable NVIDIA GPU Acceleration](#4-enable-nvidia-gpu-acceleration-recommended).
+- **Error: "CUDA error: no kernel image is available for execution on the device"**: This happens when using a modern architecture GPU (e.g., NVIDIA RTX Blackwell / `sm_120`) with older CUDA binaries. To fix this, install the CUDA 12.8+ PyTorch build as explained in section 4.B.
 - **Python Version**: If using Python 3.12, binary wheels are used for all dependencies for fast, compiler-free installation.

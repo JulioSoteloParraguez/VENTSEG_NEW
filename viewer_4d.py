@@ -97,14 +97,14 @@ QWidget {
     background-color: #1a1b22;
     color: #e0e6ed;
     font-family: 'Segoe UI', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
-    font-size: 13px;
+    font-size: 12.5px;
 }
 
 QGroupBox {
     border: 1px solid #2d313e;
     border-radius: 8px;
-    margin-top: 1.2em;
-    padding-top: 12px;
+    margin-top: 14px;
+    padding-top: 14px;
     padding-left: 8px;
     padding-right: 8px;
     padding-bottom: 8px;
@@ -116,7 +116,8 @@ QGroupBox {
 QGroupBox::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    left: 12px;
+    left: 10px;
+    top: 2px;
     padding: 0 6px;
     background-color: #21242d;
 }
@@ -126,8 +127,9 @@ QPushButton {
     color: #eceff4;
     border: 1px solid #3b4252;
     border-radius: 6px;
-    padding: 6px 12px;
+    padding: 5px 10px;
     font-weight: 500;
+    min-height: 22px;
 }
 
 QPushButton:hover {
@@ -244,23 +246,23 @@ QProgressBar::chunk {
 
 QSlider::groove:horizontal {
     border: 1px solid #3b4252;
-    height: 8px;
+    height: 6px;
     background: #282c37;
-    border-radius: 4px;
+    border-radius: 3px;
 }
 
 QSlider::sub-page:horizontal {
     background: #007acc;
-    border-radius: 4px;
+    border-radius: 3px;
 }
 
 QSlider::handle:horizontal {
     background: #ffffff;
     border: 2px solid #007acc;
-    width: 18px;
+    width: 16px;
     margin-top: -5px;
     margin-bottom: -5px;
-    border-radius: 9px;
+    border-radius: 8px;
 }
 
 QSlider::handle:horizontal:hover {
@@ -272,7 +274,7 @@ QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
     background-color: #282c37;
     border: 1px solid #3b4252;
     border-radius: 6px;
-    padding: 4px 8px;
+    padding: 3px 6px;
     color: #eceff4;
     min-height: 22px;
 }
@@ -284,7 +286,7 @@ QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover, QLineEdit:hover {
 QComboBox::drop-down {
     subcontrol-origin: padding;
     subcontrol-position: top right;
-    width: 20px;
+    width: 18px;
     border-left-width: 0px;
 }
 
@@ -309,7 +311,7 @@ QTabBar::tab {
     border-bottom: none;
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
-    padding: 8px 16px;
+    padding: 7px 14px;
     margin-right: 2px;
     font-weight: 500;
 }
@@ -335,8 +337,8 @@ QStatusBar {
 QToolBar {
     background-color: #21242d;
     border-bottom: 1px solid #2d313e;
-    spacing: 6px;
-    padding: 4px;
+    spacing: 5px;
+    padding: 3px 5px;
 }
 
 QLabel#badgeLabel {
@@ -369,23 +371,27 @@ QLabel#metricCard {
     background-color: #21242d;
     border: 1px solid #2d313e;
     border-radius: 6px;
-    padding: 6px 8px;
+    padding: 5px 7px;
 }
 
 QCheckBox, QRadioButton {
-    spacing: 8px;
+    spacing: 6px;
     color: #e0e6ed;
 }
 
-QCheckBox::indicator {
-    width: 16px;
-    height: 16px;
-    border-radius: 4px;
+QCheckBox::indicator, QRadioButton::indicator {
+    width: 15px;
+    height: 15px;
+    border-radius: 3px;
     border: 1px solid #3b4252;
     background-color: #282c37;
 }
 
-QCheckBox::indicator:checked {
+QRadioButton::indicator {
+    border-radius: 7px;
+}
+
+QCheckBox::indicator:checked, QRadioButton::indicator:checked {
     background-color: #007acc;
     border-color: #0098ff;
 }
@@ -878,13 +884,13 @@ class InteractiveViewerCanvas(FigureCanvasQTAgg):
     phase_scroll_requested = pyqtSignal(int)    # delta (+1 or -1)
 
     def __init__(self, parent=None):
-        self.fig = Figure(facecolor='#1a1b22', tight_layout=True)
+        self.fig = Figure(facecolor='#1a1b22')
         super().__init__(self.fig)
         self.setParent(parent)
 
-        gs = self.fig.add_gridspec(3, 1, height_ratios=[3.6, 0.15, 1.45])
+        gs = self.fig.add_gridspec(2, 1, height_ratios=[3.0, 1.8], hspace=0.22)
         self.ax_img = self.fig.add_subplot(gs[0])
-        self.ax_curve = self.fig.add_subplot(gs[2])
+        self.ax_curve = self.fig.add_subplot(gs[1])
 
         self.img_artist = None
         self.mask_artist = None
@@ -914,7 +920,7 @@ class InteractiveViewerCanvas(FigureCanvasQTAgg):
             spine.set_color('#2d313e')
         self.ax_img.text(
             0.5, 0.5,
-            "VENTSEG 4D - Cardiac Image Viewer & Quantification Suite\n\n"
+            "VENTSEG 4D - Cardiac Image Viewer && Quantification Suite\n\n"
             "Open a 4D medical dataset (.mat, .nii, .npy)\n"
             "via 'Open Image' (Ctrl+O) to begin.\n\n"
             "Automatically quantify and segment using ResNet34-UNet\n"
@@ -938,23 +944,24 @@ class InteractiveViewerCanvas(FigureCanvasQTAgg):
             transform=self.ax_curve.transAxes, color='#6b7280', fontsize=9
         )
         self.ax_curve.set_title("Cardiac Volume Curves", color='#6b7280', fontsize=9.5, pad=4)
+        self.fig.subplots_adjust(left=0.065, right=0.985, top=0.955, bottom=0.095, hspace=0.22)
         self.draw_idle()
 
     def setup_axes(self):
         self.ax_img.set_facecolor('#13141a')
-        self.ax_img.tick_params(colors='#8f9ba8', labelsize=9)
+        self.ax_img.tick_params(colors='#8f9ba8', labelsize=8.5)
         for spine in self.ax_img.spines.values():
             spine.set_color('#2d313e')
-        self.ax_img.set_title("2D Cardiac Slice", color='#4da8da', fontsize=12, pad=6, fontweight='bold')
+        self.ax_img.set_title("2D Cardiac Slice", color='#4da8da', fontsize=11, pad=6, fontweight='bold')
 
         self.ax_curve.set_facecolor('#13141a')
         self.ax_curve.tick_params(colors='#8f9ba8', labelsize=8)
         for spine in self.ax_curve.spines.values():
             spine.set_color('#2d313e')
-        self.ax_curve.set_xlabel("Cardiac Phase (Time / Frame)", color='#8f9ba8', fontsize=9)
-        self.ax_curve.set_ylabel("Volume (mL)", color='#8f9ba8', fontsize=9)
+        self.ax_curve.set_xlabel("Cardiac Phase (Time / Frame)", color='#8f9ba8', fontsize=8.5)
+        self.ax_curve.set_ylabel("Volume (mL)", color='#8f9ba8', fontsize=8.5)
         self.ax_curve.grid(True, color='#2d313e', linestyle='--', alpha=0.6)
-        self.ax_curve.set_title("Cardiac Volume Curves (LV, MYO, RV)", color='#00adb5', fontsize=10, pad=4)
+        self.ax_curve.set_title("Cardiac Volume Curves (LV, MYO, RV)", color='#00adb5', fontsize=9.5, pad=4)
 
     def update_display(self, slice_data, vmin, vmax, cmap_name, mask_slice=None, mask_alpha=0.45,
                        show_mask=False, current_slice=0, total_slices=1, current_phase=0, total_phases=1,
@@ -982,13 +989,13 @@ class InteractiveViewerCanvas(FigureCanvasQTAgg):
                 interpolation='bilinear', origin='upper'
             )
             self.ax_img.set_title(title_text, color='#4da8da' if not (is_ed or is_es) else ('#51cf66' if is_ed else '#ff6b6b'),
-                                  fontsize=11, fontweight='bold')
+                                  fontsize=10.5, fontweight='bold')
         else:
             self.img_artist.set_data(slice_data)
             self.img_artist.set_clim(vmin=vmin, vmax=vmax)
             self.img_artist.set_cmap(cmap_name)
             self.ax_img.set_title(title_text, color='#4da8da' if not (is_ed or is_es) else ('#51cf66' if is_ed else '#ff6b6b'),
-                                  fontsize=11, fontweight='bold')
+                                  fontsize=10.5, fontweight='bold')
 
         # Segmentation Mask Overlay
         if show_mask and mask_slice is not None:
@@ -1028,7 +1035,7 @@ class InteractiveViewerCanvas(FigureCanvasQTAgg):
         for spine in self.ax_curve.spines.values():
             spine.set_color('#2d313e')
         self.ax_curve.grid(True, color='#2d313e', linestyle='--', alpha=0.6)
-        self.ax_curve.set_xlabel("Cardiac Phase (Time / Frame)", color='#8f9ba8', fontsize=9)
+        self.ax_curve.set_xlabel("Cardiac Phase (Time / Frame)", color='#8f9ba8', fontsize=8.5)
 
         if med_image is not None and med_image.has_mask and total_phases > 0:
             phases_x = np.arange(1, total_phases + 1)
@@ -1072,7 +1079,7 @@ class InteractiveViewerCanvas(FigureCanvasQTAgg):
                 myo_data = slice_curves['myo']
                 rv_data = slice_curves['rv']
 
-            self.ax_curve.set_ylabel(unit_str, color='#8f9ba8', fontsize=8.5)
+            self.ax_curve.set_ylabel(unit_str, color='#8f9ba8', fontsize=8.0)
 
             # Plot curves: LV (Red), Myocardium (Green), RV (Blue)
             self.ax_curve.plot(phases_x, lv_data, marker='o', markersize=4.5, color='#ff5c5c',
@@ -1101,9 +1108,16 @@ class InteractiveViewerCanvas(FigureCanvasQTAgg):
 
             # Mark Current Phase
             self.ax_curve.axvline(x=current_phase + 1, color='#00ffff', linestyle='-', linewidth=2.2,
-                                  alpha=0.95, label=f'Current Phase ({current_phase + 1})', zorder=5)
+                                  alpha=0.95, label=f'Current ({current_phase + 1})', zorder=5)
 
             self.ax_curve.set_xlim(0.5, total_phases + 0.5)
+
+            # Add headroom to y-axis so data points and curve lines NEVER collide with legend
+            all_vals = np.concatenate([lv_data, myo_data, rv_data]) if len(lv_data) > 0 else np.array([0])
+            all_max = float(np.max(all_vals)) if len(all_vals) > 0 else 1.0
+            all_min = float(np.min(all_vals)) if len(all_vals) > 0 else 0.0
+            y_headroom = max(1.0, all_max * 1.32)
+            self.ax_curve.set_ylim(max(0.0, all_min * 0.95), y_headroom)
 
             m = med_image.cardiac_metrics
             if m and 'lv_ef' in m:
@@ -1122,12 +1136,13 @@ class InteractiveViewerCanvas(FigureCanvasQTAgg):
             else:
                 title_curve = f"{mode_title}  |  Current Phase: {current_phase + 1}/{total_phases}"
 
-            self.ax_curve.set_title(title_curve, color='#00adb5', fontsize=9.5, fontweight='bold', pad=4)
+            self.ax_curve.set_title(title_curve, color='#00adb5', fontsize=9.0, fontweight='bold', pad=3)
             self.ax_curve.legend(loc='upper right', facecolor='#21242d', edgecolor='#3b4252',
-                                 labelcolor='#eceff4', fontsize=7.5, framealpha=0.85, ncol=3)
+                                 labelcolor='#eceff4', fontsize=7.5, framealpha=0.88, ncol=3,
+                                 borderpad=0.3, handletextpad=0.4, columnspacing=0.8)
 
         else:
-            self.ax_curve.set_ylabel("Volume / Area", color='#8f9ba8', fontsize=8.5)
+            self.ax_curve.set_ylabel("Volume / Area", color='#8f9ba8', fontsize=8.0)
             if total_phases > 1:
                 self.ax_curve.set_xlim(0.5, total_phases + 0.5)
                 self.ax_curve.axvline(x=current_phase + 1, color='#00ffff', linestyle='-', linewidth=2)
@@ -1141,8 +1156,9 @@ class InteractiveViewerCanvas(FigureCanvasQTAgg):
                 bbox=dict(boxstyle='round,pad=0.5', facecolor='#21242d', edgecolor='#3b4252', alpha=0.8)
             )
             self.ax_curve.set_title("Cardiac Volume Curves (Requires Segmentation)",
-                                    color='#6b7280', fontsize=9, fontstyle='italic', pad=4)
+                                    color='#6b7280', fontsize=8.5, fontstyle='italic', pad=3)
 
+        self.fig.subplots_adjust(left=0.065, right=0.985, top=0.955, bottom=0.095, hspace=0.22)
         self.draw_idle()
 
     def on_mouse_click(self, event):
@@ -1218,23 +1234,27 @@ class MultiSliceGridWidget(QWidget):
         # Bottom control toolbar
         self.control_bar = QFrame(self)
         self.control_bar.setStyleSheet(
-            "QFrame { background-color: #21242d; border-top: 1px solid #2d313e; border-radius: 6px; padding: 3px 6px; }"
+            "QFrame { background-color: #21242d; border-top: 1px solid #2d313e; border-radius: 6px; padding: 4px 8px; }"
         )
-        cb_layout = QHBoxLayout(self.control_bar)
-        cb_layout.setContentsMargins(6, 4, 6, 4)
-        cb_layout.setSpacing(8)
+        cb_main_layout = QVBoxLayout(self.control_bar)
+        cb_main_layout.setContentsMargins(6, 4, 6, 4)
+        cb_main_layout.setSpacing(5)
 
-        # Mode Selector
-        cb_layout.addWidget(QLabel("<b>Mode:</b>"))
+        # Row 1: Mode, Columns, ROI Focus, Mask, Opacity
+        row1_layout = QHBoxLayout()
+        row1_layout.setContentsMargins(0, 0, 0, 0)
+        row1_layout.setSpacing(10)
+
+        row1_layout.addWidget(QLabel("<b>Mode:</b>"))
         self.combo_mode = QComboBox()
         self.combo_mode.addItem("Cardiac Cycle (Phases)", "phases")
         self.combo_mode.addItem("Multi-Slice (Z-Stack)", "slices")
         self.combo_mode.addItem("ED vs ES Comparison", "edes_compare")
+        self.combo_mode.setMinimumWidth(170)
         self.combo_mode.currentIndexChanged.connect(self.on_mode_changed)
-        cb_layout.addWidget(self.combo_mode)
+        row1_layout.addWidget(self.combo_mode)
 
-        # Columns Selector
-        cb_layout.addWidget(QLabel("<b>Columns:</b>"))
+        row1_layout.addWidget(QLabel("<b>Columns:</b>"))
         self.combo_cols = QComboBox()
         self.combo_cols.addItem("Auto (Optimal Fit)", "auto")
         self.combo_cols.addItem("3 Columns (Large)", "3")
@@ -1245,53 +1265,58 @@ class MultiSliceGridWidget(QWidget):
         self.combo_cols.addItem("8 Columns", "8")
         self.combo_cols.addItem("10 Columns", "10")
         self.combo_cols.addItem("12 Columns", "12")
+        self.combo_cols.setMinimumWidth(130)
         self.combo_cols.currentIndexChanged.connect(self.on_cols_changed)
-        cb_layout.addWidget(self.combo_cols)
+        row1_layout.addWidget(self.combo_cols)
 
-        # Cardiac ROI Focus Checkbox
         self.chk_roi_focus = QCheckBox("Cardiac ROI Focus")
         self.chk_roi_focus.setToolTip("Automatically zoom and center on the ventricular region for maximum cardiac detail")
         self.chk_roi_focus.setChecked(True)
         self.chk_roi_focus.toggled.connect(self.on_toggle_roi)
-        cb_layout.addWidget(self.chk_roi_focus)
+        row1_layout.addWidget(self.chk_roi_focus)
 
-        # Segmentation Overlay Checkbox
-        self.chk_mosaic_mask = QCheckBox("Mask")
+        self.chk_mosaic_mask = QCheckBox("Mask Overlay")
         self.chk_mosaic_mask.setChecked(True)
         self.chk_mosaic_mask.toggled.connect(self.on_toggle_mask)
-        cb_layout.addWidget(self.chk_mosaic_mask)
+        row1_layout.addWidget(self.chk_mosaic_mask)
 
-        # Opacity Slider
-        cb_layout.addWidget(QLabel("Opacity:"))
+        row1_layout.addWidget(QLabel("Opacity:"))
         self.slider_mosaic_opacity = QSlider(Qt.Orientation.Horizontal)
         self.slider_mosaic_opacity.setRange(5, 100)
         self.slider_mosaic_opacity.setValue(45)
         self.slider_mosaic_opacity.setFixedWidth(75)
         self.slider_mosaic_opacity.valueChanged.connect(self.on_opacity_changed)
-        cb_layout.addWidget(self.slider_mosaic_opacity)
+        row1_layout.addWidget(self.slider_mosaic_opacity)
 
         self.lbl_opacity_val = QLabel("45%")
-        self.lbl_opacity_val.setStyleSheet("color: #8f9ba8; font-size: 11px;")
-        cb_layout.addWidget(self.lbl_opacity_val)
+        self.lbl_opacity_val.setStyleSheet("color: #8f9ba8; font-size: 11px; min-width: 28px;")
+        row1_layout.addWidget(self.lbl_opacity_val)
+        row1_layout.addStretch()
 
-        cb_layout.addStretch()
+        # Row 2: Navigation Jump buttons, info & Save
+        row2_layout = QHBoxLayout()
+        row2_layout.setContentsMargins(0, 0, 0, 0)
+        row2_layout.setSpacing(10)
 
-        # Jump to ED/ES buttons
         self.btn_go_ed = QPushButton("Jump to ED")
         self.btn_go_ed.setObjectName("edButton")
         self.btn_go_ed.clicked.connect(self.jump_to_ed)
-        cb_layout.addWidget(self.btn_go_ed)
+        row2_layout.addWidget(self.btn_go_ed)
 
         self.btn_go_es = QPushButton("Jump to ES")
         self.btn_go_es.setObjectName("esButton")
         self.btn_go_es.clicked.connect(self.jump_to_es)
-        cb_layout.addWidget(self.btn_go_es)
+        row2_layout.addWidget(self.btn_go_es)
 
-        # Save Mosaic Button
-        self.btn_export_mosaic = QPushButton("Save Mosaic")
+        row2_layout.addStretch()
+
+        self.btn_export_mosaic = QPushButton("Save Mosaic Image (PNG)")
         self.btn_export_mosaic.setToolTip("Export entire mosaic grid to high-resolution PNG image")
         self.btn_export_mosaic.clicked.connect(self.export_mosaic_image)
-        cb_layout.addWidget(self.btn_export_mosaic)
+        row2_layout.addWidget(self.btn_export_mosaic)
+
+        cb_main_layout.addLayout(row1_layout)
+        cb_main_layout.addLayout(row2_layout)
 
         self.layout.addWidget(self.control_bar, 0)
 
@@ -1510,7 +1535,7 @@ class MultiSliceGridWidget(QWidget):
             header = f"Cardiac Cycle Mosaic — Slice {self.current_slice + 1}/{self.med_img.num_slices}"
             if self.med_img.has_mask:
                 header += f"  |  ED: Phase {ed_phase + 1}   ES: Phase {es_phase + 1}"
-            self.fig.suptitle(header, color='#4da8da', fontsize=10.5, fontweight='bold', y=0.988)
+            self.fig.suptitle(header, color='#4da8da', fontsize=10.0, fontweight='bold', y=0.975)
 
             for p in range(n_items):
                 ax = self.fig.add_subplot(rows, cols, p + 1)
@@ -1554,8 +1579,8 @@ class MultiSliceGridWidget(QWidget):
                     border_color = '#2d313e'
                     border_width = 0.8
 
-                ax.set_title(title_str, color=title_color, fontsize=8.0,
-                             fontweight='bold' if (is_ed or is_es or is_curr) else 'normal', pad=1.5)
+                ax.set_title(title_str, color=title_color, fontsize=7.5,
+                             fontweight='bold' if (is_ed or is_es or is_curr) else 'normal', pad=2)
                 ax.set_xticks([])
                 ax.set_yticks([])
                 for spine in ax.spines.values():
@@ -1593,7 +1618,7 @@ class MultiSliceGridWidget(QWidget):
 
             header = f"Multi-Slice Z-Stack Mosaic — Cardiac Phase {self.current_phase + 1}/{self.med_img.num_phases}{phase_tag}"
             self.fig.suptitle(header, color='#4da8da' if not phase_tag else ('#51cf66' if 'DIASTOLE' in phase_tag else '#ff6b6b'),
-                              fontsize=10.5, fontweight='bold', y=0.988)
+                              fontsize=10.0, fontweight='bold', y=0.975)
 
             for s in range(n_items):
                 ax = self.fig.add_subplot(rows, cols, s + 1)
@@ -1617,8 +1642,8 @@ class MultiSliceGridWidget(QWidget):
                 border_width = 1.8 if is_curr else 0.8
 
                 ax.set_title(f"Slice {s + 1}" + (" (Curr.)" if is_curr else ""),
-                             color='#4da8da' if is_curr else '#8f9ba8', fontsize=8.0,
-                             fontweight='bold' if is_curr else 'normal', pad=1.5)
+                             color='#4da8da' if is_curr else '#8f9ba8', fontsize=7.5,
+                             fontweight='bold' if is_curr else 'normal', pad=2)
                 ax.set_xticks([])
                 ax.set_yticks([])
                 for spine in ax.spines.values():
@@ -1658,7 +1683,7 @@ class MultiSliceGridWidget(QWidget):
                 self.canvas.resize(vp_w - 10, max(vp_h, needed_h))
 
             header = f"Cardiac Comparison: End-Diastole (Phase {p_ed + 1}) vs End-Systole (Phase {p_es + 1})"
-            self.fig.suptitle(header, color='#4da8da', fontsize=10.5, fontweight='bold', y=0.988)
+            self.fig.suptitle(header, color='#4da8da', fontsize=10.0, fontweight='bold', y=0.975)
 
             # Top Row: End-Diastole (ED)
             for s in range(n_slices):
@@ -1680,7 +1705,7 @@ class MultiSliceGridWidget(QWidget):
                     ax.set_xlim(roi_c0, roi_c1)
                     ax.set_ylim(roi_r1, roi_r0)
 
-                ax.set_title(f"Slice {s + 1} (ED)", color='#51cf66', fontsize=8.0, fontweight='bold', pad=1.5)
+                ax.set_title(f"Slice {s + 1} (ED)", color='#51cf66', fontsize=7.5, fontweight='bold', pad=2)
                 ax.set_xticks([])
                 ax.set_yticks([])
                 for spine in ax.spines.values():
@@ -1709,7 +1734,7 @@ class MultiSliceGridWidget(QWidget):
                     ax.set_xlim(roi_c0, roi_c1)
                     ax.set_ylim(roi_r1, roi_r0)
 
-                ax.set_title(f"Slice {s + 1} (ES)", color='#ff6b6b', fontsize=8.0, fontweight='bold', pad=1.5)
+                ax.set_title(f"Slice {s + 1} (ES)", color='#ff6b6b', fontsize=7.5, fontweight='bold', pad=2)
                 ax.set_xticks([])
                 ax.set_yticks([])
                 for spine in ax.spines.values():
@@ -1719,9 +1744,9 @@ class MultiSliceGridWidget(QWidget):
                 self.tile_metadata.append(('compare_es', s))
 
         self.fig.subplots_adjust(
-            left=0.005, right=0.995,
-            top=0.952, bottom=0.008,
-            wspace=0.015, hspace=0.065
+            left=0.008, right=0.992,
+            top=0.915, bottom=0.010,
+            wspace=0.015, hspace=0.070
         )
 
         self.canvas.draw_idle()
@@ -2123,9 +2148,9 @@ class VoxelSizeDialog(QDialog):
     def __init__(self, parent=None, med_image=None):
         super().__init__(parent)
         self.med_image = med_image
-        self.setWindowTitle("Spatial Calibration & Voxel Size (mm)")
+        self.setWindowTitle("Spatial Calibration && Voxel Size (mm)")
         self.setWindowIcon(get_app_icon())
-        self.resize(540, 430)
+        self.resize(560, 440)
         self.setStyleSheet(DARK_STYLE_SHEET)
 
         curr_vx = self.med_image.voxel_size if self.med_image is not None else np.array([1.0, 1.0, 1.0])
@@ -2275,9 +2300,9 @@ class SegmentationDialog(QDialog):
         self.med_image = med_image
         self.current_phase = current_phase
         self.default_output_dir = default_output_dir or (os.path.dirname(os.path.abspath(self.med_image.filename)) if self.med_image and self.med_image.filename else os.getcwd())
-        self.setWindowTitle("AI Cardiac Quantification & Segmentation (VENTSEG ResNet34-UNet)")
+        self.setWindowTitle("AI Cardiac Quantification && Segmentation (VENTSEG ResNet34-UNet)")
         self.setWindowIcon(get_app_icon())
-        self.resize(640, 580)
+        self.resize(660, 600)
         self.setStyleSheet(DARK_STYLE_SHEET)
 
         layout = QVBoxLayout(self)
@@ -2306,12 +2331,12 @@ class SegmentationDialog(QDialog):
         mode_layout = QVBoxLayout(mode_group)
         mode_layout.setSpacing(8)
 
-        self.radio_fast_edes = QRadioButton("Fast ED / ES Detection + 3D Diastolic & Systolic Volumes (Recommended)")
+        self.radio_fast_edes = QRadioButton("Fast ED / ES Detection + 3D Diastolic && Systolic Volumes (Recommended)")
         self.radio_fast_edes.setChecked(True)
         lbl_fast_desc = QLabel("   • Segments central slice to automatically detect ED and ES phases,\n     then segments all slices at those 2 key phases -> segmentation_ED.mat & segmentation_ES.mat.")
         lbl_fast_desc.setStyleSheet("color: #8f9ba8; font-size: 11px;")
 
-        self.radio_full_4d = QRadioButton("Full 4D Spatio-Temporal Segmentation (All Phases & Slices -> segmentation_all_phases.mat)")
+        self.radio_full_4d = QRadioButton("Full 4D Spatio-Temporal Segmentation (All Phases && Slices -> segmentation_all_phases.mat)")
         lbl_full_desc = QLabel("   • Segments entire 4D spatio-temporal volume.\n     Generates segmentation_all_phases.mat, segmentation_ED.mat, and segmentation_ES.mat.")
         lbl_full_desc.setStyleSheet("color: #8f9ba8; font-size: 11px;")
 
@@ -2509,11 +2534,11 @@ class CardiacReportDialog(QDialog):
         self.mode = mode
         self.setWindowTitle("Ventricular Clinical Report (mL) - VENTSEG")
         self.setWindowIcon(get_app_icon())
-        self.resize(680, 580)
+        self.resize(700, 600)
         self.setStyleSheet(DARK_STYLE_SHEET)
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
 
         lbl_header = QLabel("<h3>Ventricular Quantification Summary (AI - mL)</h3>")
         lbl_header.setStyleSheet("color: #4da8da;")
@@ -2548,9 +2573,9 @@ class CardiacReportDialog(QDialog):
         ef_cat = "Normal (>= 50%)" if ef >= 50.0 else ("Mildly Reduced (40-49%)" if ef >= 40.0 else "Significantly Reduced (< 40%)")
 
         card_frame = QFrame()
-        card_frame.setStyleSheet("background-color: #21242d; border: 1px solid #2d313e; border-radius: 8px; padding: 12px;")
+        card_frame.setStyleSheet("background-color: #21242d; border: 1px solid #2d313e; border-radius: 8px; padding: 10px;")
         card_layout = QGridLayout(card_frame)
-        card_layout.setSpacing(8)
+        card_layout.setSpacing(6)
 
         card_layout.addWidget(QLabel("<b>Dataset:</b>"), 0, 0)
         card_layout.addWidget(QLabel(f"{os.path.basename(self.filename)}"), 0, 1)
@@ -2586,6 +2611,7 @@ class CardiacReportDialog(QDialog):
 
         # Action Buttons
         btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
         btn_ed = QPushButton("Jump to ED")
         btn_ed.setObjectName("edButton")
         btn_ed.clicked.connect(self.go_to_ed)
@@ -2703,10 +2729,31 @@ class VentSegViewer4D(QMainWindow):
 
     def __init__(self, initial_filepath=None):
         super().__init__()
-        self.setWindowTitle("VENTSEG - 4D Cardiac MRI Medical Image Viewer & Quantification Suite")
+        self.setWindowTitle("VENTSEG - 4D Cardiac MRI Medical Image Viewer && Quantification Suite")
         self.setWindowIcon(get_app_icon())
-        self.resize(1420, 930)
-        self.setMinimumSize(1024, 700)
+
+        # Determine optimal window geometry according to primary screen available area
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            screen_w = avail.width()
+            screen_h = avail.height()
+        else:
+            screen_w = 1536
+            screen_h = 912
+
+        # Optimal responsive size (prevents pushing window bottom/status bar below taskbar)
+        target_w = min(1480, max(1000, int(screen_w * 0.94)))
+        target_h = min(860, max(660, int(screen_h * 0.93)))
+        self.resize(target_w, target_h)
+        self.setMinimumSize(960, 600)
+
+        # Center on primary screen
+        if screen is not None:
+            geom = self.frameGeometry()
+            geom.moveCenter(avail.center())
+            self.move(geom.topLeft())
+
         self.setStyleSheet(DARK_STYLE_SHEET)
 
         # Internal state
@@ -2784,8 +2831,8 @@ class VentSegViewer4D(QMainWindow):
         self.grid_view_widget.slice_selected.connect(self.on_grid_slice_selected)
         self.grid_view_widget.phase_selected.connect(self.on_grid_phase_selected)
 
-        self.tabs.addTab(single_view_widget, "Single View & Volumetric Curves (LV, RV, MYO in mL)")
-        self.tabs.addTab(self.grid_view_widget, "Cardiac Mosaic (ED/ES Phases & Slices)")
+        self.tabs.addTab(single_view_widget, "Single View && Volumetric Curves (LV, RV, MYO in mL)")
+        self.tabs.addTab(self.grid_view_widget, "Cardiac Mosaic (ED/ES Phases && Slices)")
         self.tabs.currentChanged.connect(self.on_tab_changed)
 
         center_layout.addWidget(self.tabs)
@@ -2793,8 +2840,10 @@ class VentSegViewer4D(QMainWindow):
         # --- LEFT SIDEBAR PANEL (Controls & Metrics) ---
         self.sidebar_scroll = QScrollArea()
         self.sidebar_scroll.setWidgetResizable(True)
-        self.sidebar_scroll.setMinimumWidth(300)
-        self.sidebar_scroll.setMaximumWidth(460)
+        self.sidebar_scroll.setMinimumWidth(330)
+        self.sidebar_scroll.setMaximumWidth(520)
+        self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.sidebar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         sidebar_content = QWidget()
         sidebar_layout = QVBoxLayout(sidebar_content)
@@ -2818,6 +2867,11 @@ class VentSegViewer4D(QMainWindow):
         self.main_splitter.setCollapsible(0, True)
         self.main_splitter.setStretchFactor(0, 0)
         self.main_splitter.setStretchFactor(1, 1)
+
+        # Set default splitter proportions: 360px sidebar, remaining for center
+        default_sidebar_w = 360
+        curr_w = self.width() if self.width() > 500 else 1420
+        self.main_splitter.setSizes([default_sidebar_w, max(600, curr_w - default_sidebar_w)])
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -3060,9 +3114,9 @@ class VentSegViewer4D(QMainWindow):
         return header_frame
 
     def create_cardiac_metrics_group(self):
-        group = QGroupBox("Cardiac Metrics & Key Phases (ED / ES)")
+        group = QGroupBox("Cardiac Metrics && Key Phases (ED / ES)")
         layout = QVBoxLayout(group)
-        layout.setSpacing(6)
+        layout.setSpacing(8)
 
         # Volume Unit Selector
         unit_box = QHBoxLayout()
@@ -3076,16 +3130,20 @@ class VentSegViewer4D(QMainWindow):
 
         unit_box.addWidget(self.radio_unit_ml)
         unit_box.addWidget(self.radio_unit_vx)
+        unit_box.addStretch()
         layout.addLayout(unit_box)
 
         # Jump buttons
         btn_row = QHBoxLayout()
-        self.btn_side_ed = QPushButton("End-Diastole (ED)")
+        btn_row.setSpacing(6)
+        self.btn_side_ed = QPushButton("Jump to ED")
         self.btn_side_ed.setObjectName("edButton")
+        self.btn_side_ed.setMinimumHeight(28)
         self.btn_side_ed.clicked.connect(self.jump_to_ed_phase)
 
-        self.btn_side_es = QPushButton("End-Systole (ES)")
+        self.btn_side_es = QPushButton("Jump to ES")
         self.btn_side_es.setObjectName("esButton")
+        self.btn_side_es.setMinimumHeight(28)
         self.btn_side_es.clicked.connect(self.jump_to_es_phase)
 
         btn_row.addWidget(self.btn_side_ed)
@@ -3094,17 +3152,22 @@ class VentSegViewer4D(QMainWindow):
 
         # Metrics Grid Cards
         grid_metrics = QGridLayout()
-        grid_metrics.setHorizontalSpacing(8)
-        grid_metrics.setVerticalSpacing(4)
+        grid_metrics.setHorizontalSpacing(10)
+        grid_metrics.setVerticalSpacing(5)
 
         self.lbl_metric_ed_phase = QLabel("<b>ED Phase:</b> -")
         self.lbl_metric_es_phase = QLabel("<b>ES Phase:</b> -")
         self.lbl_metric_edv = QLabel("<b>EDV (LV):</b> -")
         self.lbl_metric_esv = QLabel("<b>ESV (LV):</b> -")
-        self.lbl_metric_sv = QLabel("<b>Stroke Volume (SV):</b> -")
+        self.lbl_metric_sv = QLabel("<b>Stroke Volume:</b> -")
         self.lbl_metric_ef = QLabel("<b>Ejection Frac. (EF):</b> -")
         self.lbl_metric_myo = QLabel("<b>Myocardium (ED):</b> -")
         self.lbl_metric_rv = QLabel("<b>Right Ventricle (RV):</b> -")
+
+        for lbl in (self.lbl_metric_ed_phase, self.lbl_metric_es_phase, self.lbl_metric_edv,
+                    self.lbl_metric_esv, self.lbl_metric_sv, self.lbl_metric_ef,
+                    self.lbl_metric_myo, self.lbl_metric_rv):
+            lbl.setWordWrap(True)
 
         grid_metrics.addWidget(self.lbl_metric_ed_phase, 0, 0)
         grid_metrics.addWidget(self.lbl_metric_es_phase, 0, 1)
@@ -3129,6 +3192,7 @@ class VentSegViewer4D(QMainWindow):
 
         mode_row.addWidget(self.radio_vol3d)
         mode_row.addWidget(self.radio_area2d)
+        mode_row.addStretch()
         layout.addLayout(mode_row)
 
         return group
@@ -3140,12 +3204,13 @@ class VentSegViewer4D(QMainWindow):
 
         self.btn_run_ai = QPushButton("Start AI Quantification...")
         self.btn_run_ai.setObjectName("aiButton")
+        self.btn_run_ai.setMinimumHeight(28)
         self.btn_run_ai.setToolTip("Run neural network segmentation and clinical ventricular quantification (Ctrl+R)")
         self.btn_run_ai.clicked.connect(self.show_segmentation_dialog)
         layout.addWidget(self.btn_run_ai)
 
         btn_grid = QGridLayout()
-        btn_grid.setSpacing(4)
+        btn_grid.setSpacing(5)
 
         btn_fast = QPushButton("Fast ED/ES")
         btn_fast.setToolTip("Segments central slice, detects ED/ES phases, and segments 3D volumes at ED and ES (mL)")
@@ -3163,6 +3228,9 @@ class VentSegViewer4D(QMainWindow):
         btn_phase.setToolTip("Segments 3D volume for current cardiac phase only (-> segmentation_phase.mat)")
         btn_phase.clicked.connect(lambda: self.run_direct_segmentation(mode="single_phase"))
 
+        for b in (btn_fast, btn_full, btn_mid, btn_phase):
+            b.setMinimumHeight(24)
+
         btn_grid.addWidget(btn_fast, 0, 0)
         btn_grid.addWidget(btn_full, 0, 1)
         btn_grid.addWidget(btn_mid, 1, 0)
@@ -3171,6 +3239,7 @@ class VentSegViewer4D(QMainWindow):
 
         self.btn_view_report = QPushButton("View Clinical Report (mL)")
         self.btn_view_report.setEnabled(False)
+        self.btn_view_report.setMinimumHeight(26)
         self.btn_view_report.clicked.connect(self.show_clinical_report_dialog)
         layout.addWidget(self.btn_view_report)
 
@@ -3179,6 +3248,7 @@ class VentSegViewer4D(QMainWindow):
     def create_slice_control_group(self):
         group = QGroupBox("Slice Navigation (Z-Stack / Slices)")
         layout = QVBoxLayout(group)
+        layout.setSpacing(6)
 
         top_row = QHBoxLayout()
         lbl_title = QLabel("Current Slice:")
@@ -3195,33 +3265,40 @@ class VentSegViewer4D(QMainWindow):
         layout.addWidget(self.slider_slice)
 
         btn_layout = QHBoxLayout()
-        self.btn_slice_first = QPushButton("1")
+        btn_layout.setSpacing(4)
+        self.btn_slice_first = QPushButton("⏮ 1")
+        self.btn_slice_first.setToolTip("First slice (Ctrl+Home)")
         self.btn_slice_first.clicked.connect(lambda: self.set_slice(0))
 
-        self.btn_slice_prev = QPushButton("Prev")
+        self.btn_slice_prev = QPushButton("◀ Prev")
+        self.btn_slice_prev.setToolTip("Previous slice (Down Arrow)")
         self.btn_slice_prev.clicked.connect(lambda: self.set_slice(self.current_slice - 1))
 
-        self.btn_slice_mid = QPushButton("Center")
+        self.btn_slice_mid = QPushButton("⏺ Mid")
+        self.btn_slice_mid.setToolTip("Middle / Central slice")
         self.btn_slice_mid.clicked.connect(self.go_to_middle_slice)
 
-        self.btn_slice_next = QPushButton("Next")
+        self.btn_slice_next = QPushButton("Next ▶")
+        self.btn_slice_next.setToolTip("Next slice (Up Arrow)")
         self.btn_slice_next.clicked.connect(lambda: self.set_slice(self.current_slice + 1))
 
-        self.btn_slice_last = QPushButton("End")
+        self.btn_slice_last = QPushButton("End ⏭")
+        self.btn_slice_last.setToolTip("Last slice (Ctrl+End)")
         self.btn_slice_last.clicked.connect(lambda: self.set_slice(self.med_image.num_slices - 1 if self.med_image else 0))
 
-        btn_layout.addWidget(self.btn_slice_first)
-        btn_layout.addWidget(self.btn_slice_prev)
-        btn_layout.addWidget(self.btn_slice_mid)
-        btn_layout.addWidget(self.btn_slice_next)
-        btn_layout.addWidget(self.btn_slice_last)
+        for b in (self.btn_slice_first, self.btn_slice_prev, self.btn_slice_mid, self.btn_slice_next, self.btn_slice_last):
+            b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            b.setMinimumHeight(26)
+            btn_layout.addWidget(b)
+
         layout.addLayout(btn_layout)
 
         return group
 
     def create_phase_control_group(self):
-        group = QGroupBox("Cine Player & Cardiac Phases (Time)")
+        group = QGroupBox("Cine Player && Cardiac Phases (Time)")
         layout = QVBoxLayout(group)
+        layout.setSpacing(6)
 
         top_row = QHBoxLayout()
         lbl_title = QLabel("Cardiac Phase:")
@@ -3238,14 +3315,21 @@ class VentSegViewer4D(QMainWindow):
         layout.addWidget(self.slider_phase)
 
         btn_layout = QHBoxLayout()
-        self.btn_phase_prev = QPushButton("Prev Phase")
+        btn_layout.setSpacing(4)
+        self.btn_phase_prev = QPushButton("◀ Prev")
+        self.btn_phase_prev.setToolTip("Previous cardiac phase (Left Arrow)")
+        self.btn_phase_prev.setMinimumHeight(28)
         self.btn_phase_prev.clicked.connect(lambda: self.set_phase(self.current_phase - 1))
 
-        self.btn_play_pause = QPushButton("Play Cine")
+        self.btn_play_pause = QPushButton("▶ Play Cine")
         self.btn_play_pause.setObjectName("playButton")
+        self.btn_play_pause.setToolTip("Play or pause cardiac cine (Spacebar)")
+        self.btn_play_pause.setMinimumHeight(28)
         self.btn_play_pause.clicked.connect(self.toggle_cine_playback)
 
-        self.btn_phase_next = QPushButton("Next Phase")
+        self.btn_phase_next = QPushButton("Next ▶")
+        self.btn_phase_next.setToolTip("Next cardiac phase (Right Arrow)")
+        self.btn_phase_next.setMinimumHeight(28)
         self.btn_phase_next.clicked.connect(lambda: self.set_phase(self.current_phase + 1))
 
         btn_layout.addWidget(self.btn_phase_prev)
@@ -3268,8 +3352,9 @@ class VentSegViewer4D(QMainWindow):
         return group
 
     def create_display_control_group(self):
-        group = QGroupBox("Display, Brightness & Contrast")
+        group = QGroupBox("Display, Brightness && Contrast")
         layout = QVBoxLayout(group)
+        layout.setSpacing(6)
 
         cmap_row = QHBoxLayout()
         cmap_lbl = QLabel("Colormap:")
@@ -3295,11 +3380,15 @@ class VentSegViewer4D(QMainWindow):
         layout.addLayout(cmap_row)
 
         preset_row = QHBoxLayout()
+        preset_row.setSpacing(4)
         btn_auto = QPushButton("Auto (1%-99%)")
+        btn_auto.setMinimumHeight(24)
         btn_auto.clicked.connect(self.set_auto_contrast)
-        btn_minmax = QPushButton("Full Dynamic Range")
+        btn_minmax = QPushButton("Full Range")
+        btn_minmax.setMinimumHeight(24)
         btn_minmax.clicked.connect(self.set_minmax_contrast)
         btn_reset = QPushButton("Reset")
+        btn_reset.setMinimumHeight(24)
         btn_reset.clicked.connect(self.reset_contrast)
         preset_row.addWidget(btn_auto)
         preset_row.addWidget(btn_minmax)
@@ -3307,6 +3396,9 @@ class VentSegViewer4D(QMainWindow):
         layout.addLayout(preset_row)
 
         grid_wl = QGridLayout()
+        grid_wl.setHorizontalSpacing(8)
+        grid_wl.setVerticalSpacing(4)
+
         grid_wl.addWidget(QLabel("Window:"), 0, 0)
         self.slider_window = QSlider(Qt.Orientation.Horizontal)
         self.slider_window.setRange(1, 1000)
@@ -3328,6 +3420,7 @@ class VentSegViewer4D(QMainWindow):
     def create_mask_control_group(self):
         group = QGroupBox("Cardiac Segmentation (Overlay)")
         layout = QVBoxLayout(group)
+        layout.setSpacing(6)
 
         self.chk_show_mask = QCheckBox("Show Overlay in 2D View")
         self.chk_show_mask.setChecked(True)
@@ -3364,8 +3457,9 @@ class VentSegViewer4D(QMainWindow):
         return group
 
     def create_info_group(self):
-        group = QGroupBox("Metadata, Calibration & Voxel Size")
+        group = QGroupBox("Metadata, Calibration && Voxel Size")
         layout = QVBoxLayout(group)
+        layout.setSpacing(4)
 
         self.lbl_info_file = QLabel("Dataset: None")
         self.lbl_info_file.setWordWrap(True)
@@ -3378,6 +3472,11 @@ class VentSegViewer4D(QMainWindow):
         self.lbl_info_dtype = QLabel("Data Type: -")
         self.lbl_info_range = QLabel("Intensity Dynamic Range: -")
 
+        for lbl in (self.lbl_info_file, self.lbl_info_mask, self.lbl_info_dims,
+                    self.lbl_info_voxel_size, self.lbl_info_voxel_vol, self.lbl_info_pixel_area,
+                    self.lbl_info_dtype, self.lbl_info_range):
+            lbl.setWordWrap(True)
+
         layout.addWidget(self.lbl_info_file)
         layout.addWidget(self.lbl_info_mask)
         layout.addWidget(self.lbl_info_dims)
@@ -3389,6 +3488,7 @@ class VentSegViewer4D(QMainWindow):
 
         btn_edit_voxel = QPushButton("Configure Voxel Size (mm)...")
         btn_edit_voxel.setToolTip("Calibrate physical voxel spacing in mm for accurate volume computation in mL (Ctrl+K)")
+        btn_edit_voxel.setMinimumHeight(26)
         btn_edit_voxel.clicked.connect(self.open_voxel_size_dialog)
         layout.addWidget(btn_edit_voxel)
 
@@ -4318,8 +4418,8 @@ class VentSegViewer4D(QMainWindow):
             "• <b>Ctrl + O:</b> Open 4D medical imaging dataset (.mat, .nii, .npy)<br>"
             "• <b>Ctrl + M:</b> Load segmentation mask<br>"
             "• <b>Ctrl + Shift + S:</b> Save all results to a directory<br>"
-            "• <b>Ctrl + R:</b> AI Cardiac Quantification & Segmentation (ResNet34-UNet)<br>"
-            "• <b>Ctrl + K:</b> Spatial Calibration & Voxel Size (in mm)<br>"
+            "• <b>Ctrl + R:</b> AI Cardiac Quantification && Segmentation (ResNet34-UNet)<br>"
+            "• <b>Ctrl + K:</b> Spatial Calibration && Voxel Size (in mm)<br>"
             "• <b>U:</b> Toggle Volume Units (mL <-> Voxels)<br>"
             "• <b>Space:</b> Play / Pause Cardiac Cine<br>"
             "• <b>Left / Right Arrow:</b> Previous / Next Cardiac Phase<br>"
@@ -4327,7 +4427,7 @@ class VentSegViewer4D(QMainWindow):
             "• <b>E:</b> Jump to End-Diastole (ED)<br>"
             "• <b>S:</b> Jump to End-Systole (ES)<br>"
             "• <b>M:</b> Toggle Segmentation Mask Overlay<br>"
-            "• <b>R:</b> Reset Brightness & Contrast (Window/Level)<br>"
+            "• <b>R:</b> Reset Brightness && Contrast (Window/Level)<br>"
             "• <b>Click on Volume Curve:</b> Jump directly to clicked cardiac phase<br>"
             "• <b>Ctrl + S:</b> Save high-resolution snapshot (PNG)<br>"
             "• <b>Ctrl + G:</b> Export cardiac cine as animated GIF"
