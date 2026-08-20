@@ -9,6 +9,7 @@
   [![Python Version](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
   [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green.svg)](https://riverbankcomputing.com/software/pyqt/)
   [![PyTorch](https://img.shields.io/badge/AI-PyTorch%20%2F%20ResNet34--UNet-EE4C2C.svg)](https://pytorch.org/)
+  [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
   [![Institution](https://img.shields.io/badge/Universidad%20de%20Valpara%C3%ADso-Chile-003366.svg)](https://www.uv.cl/)
   [![Engineered with Google Antigravity](https://img.shields.io/badge/Engineered%20with-Google%20Antigravity-4285F4.svg)](#ai-assisted-interface-engineering)
 </div>
@@ -40,6 +41,7 @@
 - [Funding & Research Grants](#funding--research-grants)
 - [AI-Assisted Interface Engineering](#ai-assisted-interface-engineering)
 - [Troubleshooting & FAQ](#troubleshooting--faq)
+- [License](#license)
 
 ---
 
@@ -413,3 +415,27 @@ The modern interactive user interface, multi-view 4D cine rendering architecture
 - **GPU vs CPU**: The application automatically detects available NVIDIA CUDA devices. If PyTorch was installed without CUDA support or if no CUDA GPU is detected, it falls back to CPU computation. To switch from CPU to GPU acceleration, follow the instructions in [Enable NVIDIA GPU Acceleration](#4-enable-nvidia-gpu-acceleration-recommended).
 - **Error: "CUDA error: no kernel image is available for execution on the device"**: This happens when using a modern architecture GPU (e.g., NVIDIA RTX Blackwell / `sm_120`) with older CUDA binaries. To fix this, install the CUDA 12.8+ PyTorch build as explained in section 4.B.
 - **Python Version**: If using Python 3.12, binary wheels are used for all dependencies for fast, compiler-free installation.
+
+---
+
+## License
+
+This project is licensed under the **Apache License 2.0**.
+
+```text
+Copyright 2026 Julio Sotelo, Departamento de Informática, Universidad Técnica Federico Santa María
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+```
+
+For full details, see the [LICENSE](LICENSE) and [NOTICE](NOTICE) files.
