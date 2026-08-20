@@ -11,8 +11,9 @@ Interactive workstation and analysis suite for 4D cardiac medical imaging:
   - Dimension 3: Cardiac Phases (Time / Cardiac Cycle / T)
 
 Supported Formats:
-  - MATLAB .mat (image_SA.mat, segmentation_all_phases.mat, segmentation_ED.mat,
-                 segmentation_ES.mat, original.mat, resultado.mat)
+  - MATLAB .mat (data_SA.mat [with data_SA.MR_SA and data_SA.voxel_MR],
+                 segmentation_all_phases.mat, segmentation_ED.mat,
+                 segmentation_ES.mat, resultado.mat)
   - NIfTI .nii / .nii.gz
   - NumPy .npy / .npz
 
@@ -27,7 +28,7 @@ Key Capabilities:
   - High-occupancy multi-view cardiac mosaic (Cardiac Cycle Phase Grid, Z-Stack, and ED vs ES Comparator).
   - Visual ED/ES key-phase markers and synchronized interactive navigation.
   - Multi-class segmentation overlay (LV: Red, MYO: Green, RV: Blue) with opacity control.
-  - Window/Level (W/L) briagyghtness & contrast presets, medical colormaps, and high-resolution export (PNG, GIF, CSV, TXT, MAT).
+  - Window/Level (W/L) brightness & contrast presets, medical colormaps, and high-resolution export (PNG, GIF, CSV, TXT, MAT).
 ================================================================================
 """
 
@@ -38,6 +39,11 @@ import re
 import numpy as np
 import scipy.io
 import scipy.ndimage as ndi
+
+try:
+    import h5py
+except ImportError:
+    h5py = None
 
 try:
     import nibabel as nib
@@ -765,57 +771,76 @@ def load_file_4d(filepath):
     ext = os.path.splitext(filepath)[1].lower()
     base = os.path.basename(filepath)
     base_dir = os.path.dirname(os.path.abspath(filepath))
-    voxel_keys = ['voxel_size', 'voxelsize', 'voxel_spacing', 'spacing', 'pixel_spacing', 'pixdim', 'voxdim']
+    voxel_keys = ['voxel_MR', 'voxel_mr', 'voxel_size', 'voxelsize', 'voxel_spacing', 'spacing', 'pixel_spacing', 'pixdim', 'voxdim']
 
     if ext == '.mat':
-        mat_contents = scipy.io.loadmat(filepath)
-        candidate_keys = [
-            'image_SA', 'image_sa', 'imagesa', 'imageSA',
-            'segmentation_all_phases', 'segmentation_ED', 'segmentation_ES',
-            'segmentation_ed', 'segmentation_es', 'segmentation_phase',
-            'original', 'resultado', 'middle', 'phase', 'img', 'data', 'images', 'volume'
-        ]
-        selected_key = None
-        for k in candidate_keys:
-            if k in mat_contents and hasattr(mat_contents[k], 'shape'):
-                selected_key = k
-                break
-
-        if selected_key is None:
-            non_dunder = [k for k in mat_contents.keys() if not k.startswith('__') and hasattr(mat_contents[k], 'shape')]
-            if non_dunder:
-                selected_key = non_dunder[0]
-            else:
-                raise ValueError(f"No numeric arrays found in MATLAB file {base}.")
-
-        arr = mat_contents[selected_key]
-
-        # Extract voxel_size if present
+        arr = None
+        var_name = ''
         voxel_size = None
-        for vk in voxel_keys:
-            if vk in mat_contents:
-                v = np.squeeze(np.asarray(mat_contents[vk], dtype=np.float64))
-                if v.size >= 3:
-                    voxel_size = np.array([float(v[0]), float(v[1]), float(v[2])], dtype=np.float64)
-                    break
-                elif v.size == 2:
-                    voxel_size = np.array([float(v[0]), float(v[1]), 1.0], dtype=np.float64)
-                    break
-                elif v.size == 1:
-                    val = float(v)
-                    voxel_size = np.array([val, val, val], dtype=np.float64)
-                    break
 
-        # Fallback to companion files if missing
-        if voxel_size is None and base_dir:
-            for fallback_name in ['image_SA.mat', 'original.mat']:
-                fallback_path = os.path.join(base_dir, fallback_name)
-                if os.path.exists(fallback_path):
-                    try:
-                        fallback_mat = scipy.io.loadmat(fallback_path)
+        # 1. Check if MATLAB v7.3 (HDF5 format)
+        is_hdf5 = False
+        if h5py is not None:
+            try:
+                with open(filepath, 'rb') as f_check:
+                    header_bytes = f_check.read(128)
+                    if b'MATLAB 7.3' in header_bytes or header_bytes.startswith(b'\x89HDF\r\n\x1a\n'):
+                        is_hdf5 = True
+            except Exception:
+                pass
+
+        if is_hdf5 and h5py is not None:
+            try:
+                with h5py.File(filepath, 'r') as f:
+                    # Look inside data_SA structure/group
+                    for g_name in ['data_SA', 'data_sa', 'dataSA', 'Data_SA', 'DATA_SA']:
+                        if g_name in f and isinstance(f[g_name], h5py.Group):
+                            g = f[g_name]
+                            for mr_k in ['MR_SA', 'mr_sa', 'mr', 'MR']:
+                                if mr_k in g and isinstance(g[mr_k], h5py.Dataset):
+                                    arr = g[mr_k][()].T  # Invert HDF5 dimensions back to MATLAB order
+                                    var_name = f"{g_name}.{mr_k}"
+                                    break
+                            for vx_k in ['voxel_MR', 'voxel_mr', 'voxel_size', 'voxelsize', 'spacing']:
+                                if vx_k in g and isinstance(g[vx_k], h5py.Dataset):
+                                    v = np.squeeze(g[vx_k][()]).astype(np.float64)
+                                    if v.size >= 3:
+                                        voxel_size = np.array([float(v[0]), float(v[1]), float(v[2])], dtype=np.float64)
+                                    elif v.size == 2:
+                                        voxel_size = np.array([float(v[0]), float(v[1]), 1.0], dtype=np.float64)
+                                    elif v.size == 1:
+                                        voxel_size = np.array([float(v), float(v), float(v)], dtype=np.float64)
+                                    break
+                            if arr is not None:
+                                break
+
+                    # Check top-level datasets if not found in data_SA group
+                    if arr is None:
+                        candidate_keys = [
+                            'MR_SA', 'data_SA', 'segmentation_all_phases', 'segmentation_ED',
+                            'segmentation_ES', 'segmentation_ed', 'segmentation_es',
+                            'segmentation_phase', 'resultado', 'middle', 'phase', 'img', 'data', 'images', 'volume'
+                        ]
+                        for k in candidate_keys:
+                            if k in f and isinstance(f[k], h5py.Dataset):
+                                arr = f[k][()].T
+                                var_name = k
+                                break
+
+                    if arr is None:
+                        for k in f.keys():
+                            if k.startswith('#'):
+                                continue
+                            if isinstance(f[k], h5py.Dataset):
+                                arr = f[k][()].T
+                                var_name = k
+                                break
+
+                    # Check top-level voxel dimensions if not in data_SA
+                    if voxel_size is None:
                         for vk in voxel_keys:
-                            if vk in fallback_mat:
-                                v = np.squeeze(np.asarray(fallback_mat[vk], dtype=np.float64))
+                            if vk in f and isinstance(f[vk], h5py.Dataset):
+                                v = np.squeeze(f[vk][()]).astype(np.float64)
                                 if v.size >= 3:
                                     voxel_size = np.array([float(v[0]), float(v[1]), float(v[2])], dtype=np.float64)
                                     break
@@ -823,15 +848,115 @@ def load_file_4d(filepath):
                                     voxel_size = np.array([float(v[0]), float(v[1]), 1.0], dtype=np.float64)
                                     break
                                 elif v.size == 1:
-                                    val = float(v)
-                                    voxel_size = np.array([val, val, val], dtype=np.float64)
+                                    voxel_size = np.array([float(v), float(v), float(v)], dtype=np.float64)
                                     break
-                        if voxel_size is not None:
-                            break
-                    except Exception:
-                        pass
+            except Exception as e:
+                print(f"HDF5 reading failed for {filepath}: {e}")
 
-        return Medical4DImage(arr, filename=filepath, var_name=selected_key, voxel_size=voxel_size)
+        # 2. Fallback to scipy.io.loadmat for MATLAB v4/v6/v7 files
+        if arr is None:
+            try:
+                mat_contents = scipy.io.loadmat(filepath)
+            except NotImplementedError:
+                if h5py is not None and not is_hdf5:
+                    with h5py.File(filepath, 'r') as f:
+                        for g_name in ['data_SA', 'data_sa', 'dataSA', 'Data_SA', 'DATA_SA']:
+                            if g_name in f and isinstance(f[g_name], h5py.Group):
+                                g = f[g_name]
+                                for mr_k in ['MR_SA', 'mr_sa', 'mr', 'MR']:
+                                    if mr_k in g and isinstance(g[mr_k], h5py.Dataset):
+                                        arr = g[mr_k][()].T
+                                        var_name = f"{g_name}.{mr_k}"
+                                        break
+                                for vx_k in ['voxel_MR', 'voxel_mr', 'voxel_size', 'voxelsize', 'spacing']:
+                                    if vx_k in g and isinstance(g[vx_k], h5py.Dataset):
+                                        v = np.squeeze(g[vx_k][()]).astype(np.float64)
+                                        if v.size >= 3:
+                                            voxel_size = np.array([float(v[0]), float(v[1]), float(v[2])], dtype=np.float64)
+                                        break
+                                if arr is not None:
+                                    break
+                else:
+                    raise
+
+            if arr is None and 'mat_contents' in locals():
+                # Search inside data_SA structure in scipy.io.loadmat
+                for s_name in ['data_SA', 'data_sa', 'dataSA', 'Data_SA', 'DATA_SA']:
+                    if s_name in mat_contents:
+                        s_val = mat_contents[s_name]
+                        if hasattr(s_val, 'dtype') and s_val.dtype.names:
+                            names = s_val.dtype.names
+                            for mr_k in ['MR_SA', 'mr_sa', 'mr', 'MR']:
+                                if mr_k in names:
+                                    raw = s_val[mr_k][0, 0] if s_val.ndim == 2 else s_val[mr_k]
+                                    if hasattr(raw, 'shape'):
+                                        arr = raw
+                                        var_name = f"{s_name}.{mr_k}"
+                                        break
+                            for vx_k in ['voxel_MR', 'voxel_mr', 'voxel_size', 'voxelsize', 'spacing']:
+                                if vx_k in names:
+                                    raw_v = s_val[vx_k][0, 0] if s_val.ndim == 2 else s_val[vx_k]
+                                    v = np.squeeze(np.asarray(raw_v, dtype=np.float64))
+                                    if v.size >= 3:
+                                        voxel_size = np.array([float(v[0]), float(v[1]), float(v[2])], dtype=np.float64)
+                                    elif v.size == 2:
+                                        voxel_size = np.array([float(v[0]), float(v[1]), 1.0], dtype=np.float64)
+                                    elif v.size == 1:
+                                        voxel_size = np.array([float(v), float(v), float(v)], dtype=np.float64)
+                                    break
+                        if arr is not None:
+                            break
+
+                # Check candidate keys
+                if arr is None:
+                    candidate_keys = [
+                        'MR_SA', 'data_SA',
+                        'segmentation_all_phases', 'segmentation_ED', 'segmentation_ES',
+                        'segmentation_ed', 'segmentation_es', 'segmentation_phase',
+                        'resultado', 'middle', 'phase', 'img', 'data', 'images', 'volume'
+                    ]
+                    for k in candidate_keys:
+                        if k in mat_contents and hasattr(mat_contents[k], 'shape'):
+                            arr = mat_contents[k]
+                            var_name = k
+                            break
+
+                if arr is None:
+                    non_dunder = [k for k in mat_contents.keys() if not k.startswith('__') and hasattr(mat_contents[k], 'shape')]
+                    if non_dunder:
+                        arr = mat_contents[non_dunder[0]]
+                        var_name = non_dunder[0]
+
+                # Check top-level voxel_size / voxel_MR
+                if voxel_size is None:
+                    for vk in voxel_keys:
+                        if vk in mat_contents:
+                            v = np.squeeze(np.asarray(mat_contents[vk], dtype=np.float64))
+                            if v.size >= 3:
+                                voxel_size = np.array([float(v[0]), float(v[1]), float(v[2])], dtype=np.float64)
+                                break
+                            elif v.size == 2:
+                                voxel_size = np.array([float(v[0]), float(v[1]), 1.0], dtype=np.float64)
+                                break
+                            elif v.size == 1:
+                                voxel_size = np.array([float(v), float(v), float(v)], dtype=np.float64)
+                                break
+
+        if arr is None:
+            raise ValueError(f"No numeric arrays or data_SA structure found in MATLAB file {base}.")
+
+        # Fallback to companion data_SA.mat if voxel_size is missing
+        if voxel_size is None and base_dir:
+            fallback_path = os.path.join(base_dir, 'data_SA.mat')
+            if os.path.exists(fallback_path) and os.path.abspath(filepath) != os.path.abspath(fallback_path):
+                try:
+                    comp_img = load_file_4d(fallback_path)
+                    if comp_img.has_voxel_size_metadata:
+                        voxel_size = comp_img.voxel_size.copy()
+                except Exception:
+                    pass
+
+        return Medical4DImage(arr, filename=filepath, var_name=var_name, voxel_size=voxel_size)
 
     elif ext in ('.nii', '.gz') or filepath.endswith('.nii.gz'):
         if nib is None:
@@ -851,28 +976,14 @@ def load_file_4d(filepath):
         arr = np.load(filepath)
         voxel_size = None
         if base_dir:
-            for fallback_name in ['image_SA.mat', 'original.mat']:
-                fallback_path = os.path.join(base_dir, fallback_name)
-                if os.path.exists(fallback_path):
-                    try:
-                        fallback_mat = scipy.io.loadmat(fallback_path)
-                        for vk in voxel_keys:
-                            if vk in fallback_mat:
-                                v = np.squeeze(np.asarray(fallback_mat[vk], dtype=np.float64))
-                                if v.size >= 3:
-                                    voxel_size = np.array([float(v[0]), float(v[1]), float(v[2])], dtype=np.float64)
-                                    break
-                                elif v.size == 2:
-                                    voxel_size = np.array([float(v[0]), float(v[1]), 1.0], dtype=np.float64)
-                                    break
-                                elif v.size == 1:
-                                    val = float(v)
-                                    voxel_size = np.array([val, val, val], dtype=np.float64)
-                                    break
-                        if voxel_size is not None:
-                            break
-                    except Exception:
-                        pass
+            fallback_path = os.path.join(base_dir, 'data_SA.mat')
+            if os.path.exists(fallback_path):
+                try:
+                    comp_img = load_file_4d(fallback_path)
+                    if comp_img.has_voxel_size_metadata:
+                        voxel_size = comp_img.voxel_size.copy()
+                except Exception:
+                    pass
         return Medical4DImage(arr, filename=filepath, var_name="numpy_array", voxel_size=voxel_size)
 
     elif ext == '.npz':
@@ -880,13 +991,15 @@ def load_file_4d(filepath):
         keys = list(npz_obj.keys())
         if not keys:
             raise ValueError(f"Empty NPZ archive: {base}")
-        selected_key = 'image_SA' if 'image_SA' in keys else ('original' if 'original' in keys else keys[0])
+        selected_key = 'MR_SA' if 'MR_SA' in keys else ('data_SA' if 'data_SA' in keys else keys[0])
         arr = npz_obj[selected_key]
         voxel_size = None
-        if 'voxel_size' in keys:
-            v = np.squeeze(np.asarray(npz_obj['voxel_size'], dtype=np.float64))
-            if v.size >= 3:
-                voxel_size = np.array([float(v[0]), float(v[1]), float(v[2])], dtype=np.float64)
+        for vk in ['voxel_MR', 'voxel_size', 'voxelsize']:
+            if vk in keys:
+                v = np.squeeze(np.asarray(npz_obj[vk], dtype=np.float64))
+                if v.size >= 3:
+                    voxel_size = np.array([float(v[0]), float(v[1]), float(v[2])], dtype=np.float64)
+                    break
         return Medical4DImage(arr, filename=filepath, var_name=selected_key, voxel_size=voxel_size)
 
     else:
@@ -2877,6 +2990,7 @@ class SegmentationEditorWidget(QWidget):
                 es_p = self.med_image.es_phase
                 save_dict = {
                     'segmentation_all_phases': self.med_image.mask_4d,
+                    'voxel_MR': self.med_image.voxel_size.reshape(3, 1),
                     'voxel_size': self.med_image.voxel_size,
                     'ed_phase': ed_p + 1,
                     'es_phase': es_p + 1
@@ -2887,11 +3001,13 @@ class SegmentationEditorWidget(QWidget):
                 base_dir = os.path.dirname(os.path.abspath(filepath))
                 save_mat_dict(os.path.join(base_dir, "segmentation_ED.mat"), {
                     'segmentation_ED': self.med_image.mask_4d[:, :, :, ed_p],
+                    'voxel_MR': self.med_image.voxel_size.reshape(3, 1),
                     'voxel_size': self.med_image.voxel_size,
                     'ed_phase': ed_p + 1
                 })
                 save_mat_dict(os.path.join(base_dir, "segmentation_ES.mat"), {
                     'segmentation_ES': self.med_image.mask_4d[:, :, :, es_p],
+                    'voxel_MR': self.med_image.voxel_size.reshape(3, 1),
                     'voxel_size': self.med_image.voxel_size,
                     'es_phase': es_p + 1
                 })
@@ -3108,25 +3224,30 @@ class SegmentationWorker(QThread):
             if self.save_mat:
                 save_mat_dict(os.path.join(base_dir, 'segmentation_all_phases.mat'), {
                     'segmentation_all_phases': mask_4d,
+                    'voxel_MR': self.voxel_size.reshape(3, 1),
                     'voxel_size': self.voxel_size,
                     'ed_phase': ed_p + 1,
                     'es_phase': es_p + 1
                 })
                 save_mat_dict(os.path.join(base_dir, 'segmentation_ED.mat'), {
                     'segmentation_ED': ed_3d,
+                    'voxel_MR': self.voxel_size.reshape(3, 1),
                     'voxel_size': self.voxel_size,
                     'ed_phase': ed_p + 1
                 })
                 save_mat_dict(os.path.join(base_dir, 'segmentation_ES.mat'), {
                     'segmentation_ES': es_3d,
+                    'voxel_MR': self.voxel_size.reshape(3, 1),
                     'voxel_size': self.voxel_size,
                     'es_phase': es_p + 1
                 })
-                save_mat_dict(os.path.join(base_dir, 'image_SA.mat'), {
-                    'image_SA': self.data_4d,
-                    'voxel_size': self.voxel_size
+                save_mat_dict(os.path.join(base_dir, 'data_SA.mat'), {
+                    'data_SA': {
+                        'MR_SA': self.data_4d,
+                        'voxel_MR': self.voxel_size.reshape(3, 1)
+                    }
                 })
-                saved_files = ['segmentation_all_phases.mat', 'segmentation_ED.mat', 'segmentation_ES.mat', 'image_SA.mat']
+                saved_files = ['segmentation_all_phases.mat', 'segmentation_ED.mat', 'segmentation_ES.mat', 'data_SA.mat']
 
             self.status_message.emit("Quantification and segmentation completed successfully.")
             self.segmentation_finished.emit({
@@ -3169,25 +3290,30 @@ class SegmentationWorker(QThread):
             if self.save_mat:
                 save_mat_dict(os.path.join(base_dir, 'segmentation_all_phases.mat'), {
                     'segmentation_all_phases': mask_4d,
+                    'voxel_MR': self.voxel_size.reshape(3, 1),
                     'voxel_size': self.voxel_size,
                     'ed_phase': ed_p + 1,
                     'es_phase': es_p + 1
                 })
                 save_mat_dict(os.path.join(base_dir, 'segmentation_ED.mat'), {
                     'segmentation_ED': ed_3d,
+                    'voxel_MR': self.voxel_size.reshape(3, 1),
                     'voxel_size': self.voxel_size,
                     'ed_phase': ed_p + 1
                 })
                 save_mat_dict(os.path.join(base_dir, 'segmentation_ES.mat'), {
                     'segmentation_ES': es_3d,
+                    'voxel_MR': self.voxel_size.reshape(3, 1),
                     'voxel_size': self.voxel_size,
                     'es_phase': es_p + 1
                 })
-                save_mat_dict(os.path.join(base_dir, 'image_SA.mat'), {
-                    'image_SA': self.data_4d,
-                    'voxel_size': self.voxel_size
+                save_mat_dict(os.path.join(base_dir, 'data_SA.mat'), {
+                    'data_SA': {
+                        'MR_SA': self.data_4d,
+                        'voxel_MR': self.voxel_size.reshape(3, 1)
+                    }
                 })
-                saved_files = ['segmentation_all_phases.mat', 'segmentation_ED.mat', 'segmentation_ES.mat', 'image_SA.mat']
+                saved_files = ['segmentation_all_phases.mat', 'segmentation_ED.mat', 'segmentation_ES.mat', 'data_SA.mat']
 
             self.status_message.emit("4D spatio-temporal segmentation completed successfully.")
             self.segmentation_finished.emit({
@@ -3228,15 +3354,18 @@ class SegmentationWorker(QThread):
             if self.save_mat:
                 save_mat_dict(os.path.join(base_dir, 'segmentation_all_phases.mat'), {
                     'segmentation_all_phases': mask_4d,
+                    'voxel_MR': self.voxel_size.reshape(3, 1),
                     'voxel_size': self.voxel_size,
                     'ed_phase': ed_p + 1,
                     'es_phase': es_p + 1
                 })
-                save_mat_dict(os.path.join(base_dir, 'image_SA.mat'), {
-                    'image_SA': self.data_4d,
-                    'voxel_size': self.voxel_size
+                save_mat_dict(os.path.join(base_dir, 'data_SA.mat'), {
+                    'data_SA': {
+                        'MR_SA': self.data_4d,
+                        'voxel_MR': self.voxel_size.reshape(3, 1)
+                    }
                 })
-                saved_files = ['segmentation_all_phases.mat', 'image_SA.mat']
+                saved_files = ['segmentation_all_phases.mat', 'data_SA.mat']
 
             self.status_message.emit("Central slice segmentation completed.")
             self.segmentation_finished.emit({
@@ -3270,18 +3399,22 @@ class SegmentationWorker(QThread):
                 phase_filename = f"segmentation_phase_{p + 1}.mat"
                 save_mat_dict(os.path.join(base_dir, phase_filename), {
                     'segmentation_phase': phase_3d,
+                    'voxel_MR': self.voxel_size.reshape(3, 1),
                     'voxel_size': self.voxel_size,
                     'phase': p + 1
                 })
                 save_mat_dict(os.path.join(base_dir, 'segmentation_all_phases.mat'), {
                     'segmentation_all_phases': mask_4d,
+                    'voxel_MR': self.voxel_size.reshape(3, 1),
                     'voxel_size': self.voxel_size
                 })
-                save_mat_dict(os.path.join(base_dir, 'image_SA.mat'), {
-                    'image_SA': self.data_4d,
-                    'voxel_size': self.voxel_size
+                save_mat_dict(os.path.join(base_dir, 'data_SA.mat'), {
+                    'data_SA': {
+                        'MR_SA': self.data_4d,
+                        'voxel_MR': self.voxel_size.reshape(3, 1)
+                    }
                 })
-                saved_files = [phase_filename, 'segmentation_all_phases.mat', 'image_SA.mat']
+                saved_files = [phase_filename, 'segmentation_all_phases.mat', 'data_SA.mat']
 
             self.status_message.emit(f"Phase {p + 1} segmentation completed.")
             self.segmentation_finished.emit({
@@ -4702,16 +4835,25 @@ class VentSegViewer4D(QMainWindow):
                 base_dir = os.path.dirname(os.path.abspath(self.med_image.filename))
                 mat_files_to_update = [
                     os.path.basename(self.med_image.filename),
-                    "image_SA.mat", "segmentation_all_phases.mat", "segmentation_ED.mat",
-                    "segmentation_ES.mat", "original.mat", "resultado.mat"
+                    "data_SA.mat", "segmentation_all_phases.mat", "segmentation_ED.mat",
+                    "segmentation_ES.mat", "resultado.mat"
                 ]
                 for mf in set(mat_files_to_update):
                     mf_path = os.path.join(base_dir, mf)
                     if os.path.exists(mf_path) and mf.lower().endswith('.mat'):
                         try:
-                            m_dict = scipy.io.loadmat(mf_path)
-                            m_dict['voxel_size'] = new_vs
-                            save_mat_dict(mf_path, m_dict)
+                            if mf == "data_SA.mat" or (self.med_image.var_name and "data_SA" in self.med_image.var_name):
+                                save_mat_dict(mf_path, {
+                                    'data_SA': {
+                                        'MR_SA': self.med_image.data_4d,
+                                        'voxel_MR': new_vs.reshape(3, 1)
+                                    }
+                                })
+                            else:
+                                m_dict = scipy.io.loadmat(mf_path)
+                                m_dict['voxel_size'] = new_vs
+                                m_dict['voxel_MR'] = new_vs.reshape(3, 1)
+                                save_mat_dict(mf_path, m_dict)
                         except Exception as e:
                             print(f"Failed to update voxel_size in {mf}: {e}")
 
@@ -4894,12 +5036,9 @@ class VentSegViewer4D(QMainWindow):
     def load_default_file(self):
         script_dir = os.path.dirname(os.path.abspath(__file__))
         candidates = [
-            os.path.join(self.last_directory, "image_SA.mat"),
-            os.path.join(os.getcwd(), "image_SA.mat"),
-            os.path.join(script_dir, "image_SA.mat"),
-            os.path.join(self.last_directory, "original.mat"),
-            os.path.join(os.getcwd(), "original.mat"),
-            os.path.join(script_dir, "original.mat")
+            os.path.join(self.last_directory, "data_SA.mat"),
+            os.path.join(os.getcwd(), "data_SA.mat"),
+            os.path.join(script_dir, "data_SA.mat")
         ]
         target = None
         for p in candidates:
@@ -4910,7 +5049,7 @@ class VentSegViewer4D(QMainWindow):
         if target:
             self.load_file(target)
         else:
-            QMessageBox.warning(self, "File Not Found", f"Could not find 'image_SA.mat' or 'original.mat' in:\n{self.last_directory}")
+            QMessageBox.warning(self, "File Not Found", f"Could not find 'data_SA.mat' in:\n{self.last_directory}")
 
     def open_mask_dialog(self):
         if self.med_image is None:
@@ -5386,12 +5525,14 @@ class VentSegViewer4D(QMainWindow):
 
         saved_files = []
         try:
-            # 1. Original 4D dataset with voxel calibration (.mat)
-            save_mat_dict(os.path.join(target_dir, 'image_SA.mat'), {
-                'image_SA': self.med_image.data_4d,
-                'voxel_size': self.med_image.voxel_size
+            # 1. 4D dataset with data_SA structure and voxel calibration (.mat)
+            save_mat_dict(os.path.join(target_dir, 'data_SA.mat'), {
+                'data_SA': {
+                    'MR_SA': self.med_image.data_4d,
+                    'voxel_MR': self.med_image.voxel_size.reshape(3, 1)
+                }
             })
-            saved_files.append("image_SA.mat (4D volume with calibrated voxel dimensions)")
+            saved_files.append("data_SA.mat (4D volume with data_SA.MR_SA and data_SA.voxel_MR)")
 
             # 2. Segmentation masks
             if self.med_image.has_mask and self.med_image.mask_4d is not None:
@@ -5401,6 +5542,7 @@ class VentSegViewer4D(QMainWindow):
                 # 4D mask
                 save_mat_dict(os.path.join(target_dir, 'segmentation_all_phases.mat'), {
                     'segmentation_all_phases': self.med_image.mask_4d,
+                    'voxel_MR': self.med_image.voxel_size.reshape(3, 1),
                     'voxel_size': self.med_image.voxel_size,
                     'ed_phase': ed_p + 1,
                     'es_phase': es_p + 1
@@ -5411,6 +5553,7 @@ class VentSegViewer4D(QMainWindow):
                 ed_3d = self.med_image.mask_4d[:, :, :, ed_p]
                 save_mat_dict(os.path.join(target_dir, 'segmentation_ED.mat'), {
                     'segmentation_ED': ed_3d,
+                    'voxel_MR': self.med_image.voxel_size.reshape(3, 1),
                     'voxel_size': self.med_image.voxel_size,
                     'ed_phase': ed_p + 1
                 })
@@ -5420,6 +5563,7 @@ class VentSegViewer4D(QMainWindow):
                 es_3d = self.med_image.mask_4d[:, :, :, es_p]
                 save_mat_dict(os.path.join(target_dir, 'segmentation_ES.mat'), {
                     'segmentation_ES': es_3d,
+                    'voxel_MR': self.med_image.voxel_size.reshape(3, 1),
                     'voxel_size': self.med_image.voxel_size,
                     'es_phase': es_p + 1
                 })

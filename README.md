@@ -270,25 +270,28 @@ An example input dataset is available on Google Drive for testing and demonstrat
 📁 **[Download Sample Input Data (Google Drive)](https://drive.google.com/drive/folders/1bKaooRMNtSt7z_AWuwHUdUfG1jtCdl1k?usp=sharing)**
 
 > [!WARNING]
-> **Important Note on Voxel Size Calibration (`voxel_size`):**
+> **Important Note on Voxel Size Calibration (`data_SA.voxel_MR`):**
 > 
-> The `voxel_size` included in the example input file does **not** correspond to the actual physical voxel size of the original acquisition.
+> The `data_SA.mat` file contains the standardized `data_SA` structure used across applications:
+> - `data_SA.MR_SA`: 4D Short-Axis cine cardiac MRI matrix ($Rows \times Cols \times Slices \times Phases$).
+> - `data_SA.voxel_MR`: Physical spatial voxel dimensions $[dx; dy; dz]$ in millimeters (e.g., $[0.703; 0.703; 10.0]$ mm).
 > 
-> To obtain accurate volumetric measurements (in mL) and clinical biomarkers, you must know the true physical voxel spacing from your original DICOM dataset (`Pixel Spacing` $[dx, dy]$ and `Slice Thickness` / `Spacing Between Slices` $[dz]$ in millimeters).
+> To obtain accurate volumetric measurements (in mL) and clinical biomarkers, ensure that `data_SA.voxel_MR` reflects the true physical voxel spacing from your original DICOM acquisition (`Pixel Spacing` $[dx, dy]$ and `Slice Thickness` / `Spacing Between Slices` $[dz]$ in millimeters).
 > 
-> You can update the voxel size using either of the following methods:
+> You can update or calibrate the voxel size using either of the following methods:
 > 
 > 1. **Directly from the VENTSEG 4D Graphical Interface:**
->    - Open the dataset in the application.
+>    - Open `data_SA.mat` in the application.
 >    - Press `Ctrl + K` or click **Spatial Calibration / Voxel Size (mm)...** in the top menu or the sidebar.
->    - Enter the true physical dimensions $[dx, dy, dz]$ in millimeters (e.g., `1.25, 1.25, 8.0`) and click **Apply Calibration**. The application will automatically update and recompute all quantitative volume curves and metrics in real time.
+>    - Enter the true physical dimensions $[dx, dy, dz]$ in millimeters (e.g., `0.70, 0.70, 10.0`) and click **Apply Calibration**. The application will automatically update and recompute all quantitative volume curves and metrics in real time.
 > 
-> 2. **Directly in the MATLAB (`.mat`) File:**
->    - Open or edit your `.mat` file in MATLAB / Python and define the `voxel_size` variable ($1 \times 3$ vector in mm):
+> 2. **Directly in MATLAB (`data_SA.mat`):**
+>    - Define or edit the `data_SA` structure in MATLAB / Python:
 >      ```matlab
->      % Example in MATLAB:
->      voxel_size = [dx, dy, dz]; % e.g., [1.25, 1.25, 8.0] in mm
->      save('image_SA.mat', 'image_SA', 'voxel_size', '-v7.3');
+>      % Example in MATLAB (data_SA structure):
+>      data_SA.MR_SA = MR_SA_4D;        % 4D cine Short-Axis MRI (Rows x Cols x Slices x Phases)
+>      data_SA.voxel_MR = [dx; dy; dz]; % Voxel dimensions in mm (e.g. [0.703125; 0.703125; 10.0])
+>      save('data_SA.mat', 'data_SA', '-v7.3');
 >      ```
 
 ---
@@ -300,12 +303,12 @@ With the virtual environment activated, run:
 ```bash
 python viewer_4d.py
 ```
-Then use **File > Open Image...** to load a dataset.
+Then use **File > Open Image...** to load a dataset (e.g. `data_SA.mat`).
 
 ### Direct Dataset Loading
-You can pass the path of a `.mat` or `.nii` file directly as a command-line argument:
+You can pass the path of a `data_SA.mat` or `.nii` file directly as a command-line argument:
 ```bash
-python viewer_4d.py path/to/image_SA.mat
+python viewer_4d.py path/to/data_SA.mat
 ```
 
 ---
@@ -352,11 +355,13 @@ The application performs automated segmentation using a 2D ResNet34-UNet model e
 ## Supported Formats & Export Capabilities
 
 - **Input Formats**:
-  - MATLAB 4D/3D volumes (`.mat` with fields `img`, `image_SA`, `data`, `volume`, or first 3D/4D matrix).
+  - MATLAB 4D/3D datasets (`data_SA.mat` structure with `data_SA.MR_SA` for the 4D short-axis volume and `data_SA.voxel_MR` for spatial voxel dimensions, supporting MATLAB v7 and v7.3 HDF5 formats).
+  - Companion segmentation files (`segmentation_all_phases.mat`, `segmentation_ED.mat`, `segmentation_ES.mat`, `resultado.mat`).
   - NIfTI images (`.nii`, `.nii.gz`).
   - NumPy arrays (`.npy`, `.npz`).
 - **Export Formats**:
-  - Corrected MATLAB `.mat` workspace (`segmentation_all_phases.mat`, `segmentation_ED.mat`, `segmentation_ES.mat`) containing raw volumes, multi-class segmentation masks, calibrated physical voxel dimensions, and clinical phase markers.
+  - Calibrated MATLAB `.mat` dataset (`data_SA.mat` with `data_SA.MR_SA` and `data_SA.voxel_MR`).
+  - Corrected MATLAB segmentation workspace (`segmentation_all_phases.mat`, `segmentation_ED.mat`, `segmentation_ES.mat`) containing multi-class segmentation masks, calibrated physical voxel dimensions (`voxel_MR`), and clinical phase markers.
   - Formatted text report (`.txt`) with metadata and calculated quantitative results.
   - Volumetric time curves (`.csv`).
   - High-resolution figures (`.png`, `.jpg`).
