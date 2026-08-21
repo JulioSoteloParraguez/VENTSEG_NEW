@@ -451,7 +451,8 @@ QSplitter::handle:pressed {
 class Medical4DImage:
     """Represents a 4D medical image (Rows, Cols, Slices, Phases), its spatial calibration (voxel_size), and segmentation masks."""
 
-    def __init__(self, data=None, filename="", var_name="", voxel_size=None):
+    def __init__(self, data=None, filename="", var_name="", voxel_size=None,
+                 raw_mat_dict=None, mat_struct_fields=None, mat_struct_name="data_SA"):
         self.filename = filename
         self.var_name = var_name
         self.raw_data = None
@@ -462,6 +463,11 @@ class Medical4DImage:
         self.mean_val = 0.0
         self.std_val = 0.0
         self.dtype_str = "float32"
+
+        # Complete original MATLAB structure and metadata fields preservation
+        self.raw_mat_dict = raw_mat_dict if raw_mat_dict is not None else {}
+        self.mat_struct_fields = mat_struct_fields if mat_struct_fields is not None else {}
+        self.mat_struct_name = mat_struct_name or "data_SA"
 
         # 4D Segmentation Mask: (Rows, Cols, Slices, Phases)
         self.mask_4d = None
@@ -778,8 +784,214 @@ class Medical4DImage:
         return self.data_4d[r, c, z, :]
 
 
+def unpack_mat_struct(obj):
+    """Recursively convert scipy.io.loadmat structured arrays, void records, and cell arrays into python dicts/arrays."""
+    if isinstance(obj, dict):
+        return {k: unpack_mat_struct(v) for k, v in obj.items() if not str(k).startswith('__')}
+    elif isinstance(obj, np.ndarray):
+        if obj.dtype.names is not None:
+            # Structured array / MATLAB struct
+            if obj.size == 1:
+                elem = obj.flat[0]
+                return {name: unpack_mat_struct(elem[name]) for name in obj.dtype.names}
+            else:
+                res = []
+                for elem in obj.flat:
+                    res.append({name: unpack_mat_struct(elem[name]) for name in obj.dtype.names})
+                return np.array(res, dtype=object).reshape(obj.shape)
+        elif obj.dtype == object:
+            # Cell array / object array
+            res = np.empty(obj.shape, dtype=object)
+            for idx in np.ndindex(obj.shape):
+                res[idx] = unpack_mat_struct(obj[idx])
+            return res
+        else:
+            return obj
+    elif isinstance(obj, np.void):
+        if obj.dtype.names is not None:
+            return {name: unpack_mat_struct(obj[name]) for name in obj.dtype.names}
+        return obj
+    else:
+        return obj
+
+
+def load_mat_dict_all(filepath):
+    """Load all variables and structures from a MATLAB .mat file into clean dictionaries.
+    
+    Returns:
+        tuple: (raw_dict, struct_name, struct_fields)
+            - raw_dict (dict): Complete dictionary of top-level variables.
+            - struct_name (str): The name of the data_SA struct (if found), else ''.
+            - struct_fields (dict): Dictionary of all fields within data_SA (if found), else {}.
+    """
+    if not filepath or not os.path.exists(filepath):
+        return {}, '', {}
+
+    raw_dict = {}
+    struct_name = ''
+    struct_fields = {}
+
+    # 1. Check if MATLAB v7.3 (HDF5 format)
+    is_hdf5 = False
+    if h5py is not None:
+        try:
+            with open(filepath, 'rb') as f_check:
+                header_bytes = f_check.read(128)
+                if b'MATLAB 7.3' in header_bytes or header_bytes.startswith(b'\x89HDF\r\n\x1a\n'):
+                    is_hdf5 = True
+        except Exception:
+            pass
+
+    if is_hdf5 and h5py is not None:
+        try:
+            def _read_h5_group(grp):
+                out = {}
+                for k, v in grp.items():
+                    if k.startswith('#'):
+                        continue
+                    if isinstance(v, h5py.Dataset):
+                        data = v[()]
+                        if isinstance(data, np.ndarray) and data.ndim > 1:
+                            data = data.T
+                        out[k] = data
+                    elif isinstance(v, h5py.Group):
+                        out[k] = _read_h5_group(v)
+                return out
+
+            with h5py.File(filepath, 'r') as f:
+                raw_dict = _read_h5_group(f)
+                for s_candidate in ['data_SA', 'data_sa', 'dataSA', 'Data_SA', 'DATA_SA']:
+                    if s_candidate in raw_dict and isinstance(raw_dict[s_candidate], dict):
+                        struct_name = s_candidate
+                        struct_fields = raw_dict[s_candidate]
+                        break
+        except Exception as e:
+            print(f"HDF5 dict loading failed for {filepath}: {e}")
+
+    # 2. Fallback to scipy.io.loadmat (v4/v6/v7)
+    if not raw_dict:
+        try:
+            mat_raw = scipy.io.loadmat(filepath)
+            raw_dict = unpack_mat_struct(mat_raw)
+            for s_candidate in ['data_SA', 'data_sa', 'dataSA', 'Data_SA', 'DATA_SA']:
+                if s_candidate in raw_dict and isinstance(raw_dict[s_candidate], dict):
+                    struct_name = s_candidate
+                    struct_fields = raw_dict[s_candidate]
+                    break
+        except Exception as e:
+            print(f"scipy.io.loadmat failed for {filepath}: {e}")
+
+    return raw_dict, struct_name, struct_fields
+
+
+def save_mat_dict(filepath, data_dict):
+    """Save dictionary to MATLAB .mat format, filtering dunder keys."""
+    try:
+        clean_dict = {k: v for k, v in data_dict.items() if not str(k).startswith('__')}
+        scipy.io.savemat(filepath, clean_dict)
+    except Exception as e:
+        print(f"Error saving {filepath}: {e}")
+
+
+def save_or_update_data_sa_mat(target_filepath, mr_data, voxel_size, source_filepath=None,
+                               source_mat_struct=None, source_raw_dict=None, source_mat_struct_name="data_SA"):
+    """Safely create or update data_SA.mat preserving ALL original fields, parameters, and metadata.
+    
+    If target_filepath already exists, all existing parameters/fields and top-level variables
+    are loaded and preserved.
+    If target_filepath is new, parameters are copied from source_filepath or the provided
+    source_mat_struct / source_raw_dict.
+    Only the MR image data ('MR_SA') and voxel dimensions ('voxel_MR') are updated.
+    """
+    import copy
+
+    save_dict = {}
+    struct_name = source_mat_struct_name or 'data_SA'
+    struct_fields = {}
+
+    # Priority 1: If target file already exists on disk, preserve all its fields
+    if os.path.exists(target_filepath):
+        raw_d, s_name, s_fields = load_mat_dict_all(target_filepath)
+        if raw_d:
+            save_dict = raw_d
+        if s_name:
+            struct_name = s_name
+            struct_fields = s_fields
+        elif struct_name in save_dict and isinstance(save_dict[struct_name], dict):
+            struct_fields = save_dict[struct_name]
+
+    # Priority 2: If target is new, load from source_filepath if it's a .mat file
+    elif source_filepath and os.path.exists(source_filepath) and source_filepath.lower().endswith('.mat'):
+        raw_d, s_name, s_fields = load_mat_dict_all(source_filepath)
+        if raw_d:
+            save_dict = raw_d
+        if s_name:
+            struct_name = s_name
+            struct_fields = s_fields
+        elif struct_name in save_dict and isinstance(save_dict[struct_name], dict):
+            struct_fields = save_dict[struct_name]
+
+    # Priority 3: Use in-memory source_raw_dict / source_mat_struct if available
+    elif source_raw_dict:
+        save_dict = copy.deepcopy(source_raw_dict)
+        for s_candidate in ['data_SA', 'data_sa', 'dataSA', 'Data_SA', 'DATA_SA']:
+            if s_candidate in save_dict and isinstance(save_dict[s_candidate], dict):
+                struct_name = s_candidate
+                struct_fields = save_dict[s_candidate]
+                break
+        if not struct_fields and source_mat_struct:
+            struct_fields = copy.deepcopy(source_mat_struct)
+    elif source_mat_struct:
+        struct_fields = copy.deepcopy(source_mat_struct)
+
+    # Check companion data_SA.mat in source directory if still empty
+    if not struct_fields and source_filepath:
+        src_dir = os.path.dirname(os.path.abspath(source_filepath))
+        comp_path = os.path.join(src_dir, 'data_SA.mat')
+        if os.path.exists(comp_path) and os.path.abspath(comp_path) != os.path.abspath(target_filepath):
+            raw_d, s_name, s_fields = load_mat_dict_all(comp_path)
+            if raw_d:
+                save_dict = raw_d
+            if s_name:
+                struct_name = s_name
+                struct_fields = s_fields
+
+    if not struct_fields:
+        struct_fields = {}
+
+    # Update or insert MR_SA array
+    mr_key = 'MR_SA'
+    for k in ['MR_SA', 'mr_sa', 'mr', 'MR']:
+        if k in struct_fields:
+            mr_key = k
+            break
+    struct_fields[mr_key] = mr_data
+
+    # Update or insert voxel_MR dimensions
+    vx_key = 'voxel_MR'
+    for k in ['voxel_MR', 'voxel_mr', 'voxel_size', 'voxelsize', 'spacing']:
+        if k in struct_fields:
+            vx_key = k
+            break
+    v_arr = np.asarray(voxel_size, dtype=np.float64)
+    v_formatted = v_arr.reshape(3, 1) if v_arr.size == 3 else v_arr
+    struct_fields[vx_key] = v_formatted
+    if 'voxel_size' in struct_fields and vx_key != 'voxel_size':
+        struct_fields['voxel_size'] = v_arr
+
+    save_dict[struct_name] = struct_fields
+
+    # If top-level voxel variables were present, update them too
+    if 'voxel_MR' in save_dict and struct_name != 'voxel_MR':
+        save_dict['voxel_MR'] = v_formatted
+    if 'voxel_size' in save_dict and struct_name != 'voxel_size':
+        save_dict['voxel_size'] = v_arr
+
+    save_mat_dict(target_filepath, save_dict)
+
+
 def load_file_4d(filepath):
-    """Load a 4D medical image (.mat, .nii, .nii.gz, .npy, .npz) and extract voxel dimensions."""
+    """Load a 4D medical image (.mat, .nii, .nii.gz, .npy, .npz), extracting voxel dimensions and preserving all metadata."""
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"File not found: {filepath}")
 
@@ -789,189 +1001,87 @@ def load_file_4d(filepath):
     voxel_keys = ['voxel_MR', 'voxel_mr', 'voxel_size', 'voxelsize', 'voxel_spacing', 'spacing', 'pixel_spacing', 'pixdim', 'voxdim']
 
     if ext == '.mat':
+        raw_mat_dict, struct_name, struct_fields = load_mat_dict_all(filepath)
         arr = None
         var_name = ''
         voxel_size = None
 
-        # 1. Check if MATLAB v7.3 (HDF5 format)
-        is_hdf5 = False
-        if h5py is not None:
-            try:
-                with open(filepath, 'rb') as f_check:
-                    header_bytes = f_check.read(128)
-                    if b'MATLAB 7.3' in header_bytes or header_bytes.startswith(b'\x89HDF\r\n\x1a\n'):
-                        is_hdf5 = True
-            except Exception:
-                pass
+        # 1. Search inside data_SA structure if found
+        if struct_fields:
+            for mr_k in ['MR_SA', 'mr_sa', 'mr', 'MR']:
+                if mr_k in struct_fields and hasattr(struct_fields[mr_k], 'shape'):
+                    arr = struct_fields[mr_k]
+                    var_name = f"{struct_name}.{mr_k}"
+                    break
+            for vx_k in ['voxel_MR', 'voxel_mr', 'voxel_size', 'voxelsize', 'spacing']:
+                if vx_k in struct_fields:
+                    v = np.squeeze(np.asarray(struct_fields[vx_k], dtype=np.float64))
+                    if v.size >= 3:
+                        voxel_size = np.array([float(v[0]), float(v[1]), float(v[2])], dtype=np.float64)
+                    elif v.size == 2:
+                        voxel_size = np.array([float(v[0]), float(v[1]), 1.0], dtype=np.float64)
+                    elif v.size == 1:
+                        voxel_size = np.array([float(v), float(v), float(v)], dtype=np.float64)
+                    break
 
-        if is_hdf5 and h5py is not None:
-            try:
-                with h5py.File(filepath, 'r') as f:
-                    # Look inside data_SA structure/group
-                    for g_name in ['data_SA', 'data_sa', 'dataSA', 'Data_SA', 'DATA_SA']:
-                        if g_name in f and isinstance(f[g_name], h5py.Group):
-                            g = f[g_name]
-                            for mr_k in ['MR_SA', 'mr_sa', 'mr', 'MR']:
-                                if mr_k in g and isinstance(g[mr_k], h5py.Dataset):
-                                    arr = g[mr_k][()].T  # Invert HDF5 dimensions back to MATLAB order
-                                    var_name = f"{g_name}.{mr_k}"
-                                    break
-                            for vx_k in ['voxel_MR', 'voxel_mr', 'voxel_size', 'voxelsize', 'spacing']:
-                                if vx_k in g and isinstance(g[vx_k], h5py.Dataset):
-                                    v = np.squeeze(g[vx_k][()]).astype(np.float64)
-                                    if v.size >= 3:
-                                        voxel_size = np.array([float(v[0]), float(v[1]), float(v[2])], dtype=np.float64)
-                                    elif v.size == 2:
-                                        voxel_size = np.array([float(v[0]), float(v[1]), 1.0], dtype=np.float64)
-                                    elif v.size == 1:
-                                        voxel_size = np.array([float(v), float(v), float(v)], dtype=np.float64)
-                                    break
-                            if arr is not None:
-                                break
+        # 2. Check top-level datasets if not found in data_SA structure
+        if arr is None and raw_mat_dict:
+            candidate_keys = [
+                'MR_SA', 'data_SA', 'segmentation_all_phases', 'segmentation_ED',
+                'segmentation_ES', 'segmentation_ed', 'segmentation_es',
+                'segmentation_phase', 'resultado', 'middle', 'phase', 'img', 'data', 'images', 'volume'
+            ]
+            for k in candidate_keys:
+                if k in raw_mat_dict and hasattr(raw_mat_dict[k], 'shape'):
+                    arr = raw_mat_dict[k]
+                    var_name = k
+                    break
 
-                    # Check top-level datasets if not found in data_SA group
-                    if arr is None:
-                        candidate_keys = [
-                            'MR_SA', 'data_SA', 'segmentation_all_phases', 'segmentation_ED',
-                            'segmentation_ES', 'segmentation_ed', 'segmentation_es',
-                            'segmentation_phase', 'resultado', 'middle', 'phase', 'img', 'data', 'images', 'volume'
-                        ]
-                        for k in candidate_keys:
-                            if k in f and isinstance(f[k], h5py.Dataset):
-                                arr = f[k][()].T
-                                var_name = k
-                                break
+            if arr is None:
+                non_dunder = [k for k in raw_mat_dict.keys() if not k.startswith('__') and hasattr(raw_mat_dict[k], 'shape')]
+                if non_dunder:
+                    arr = raw_mat_dict[non_dunder[0]]
+                    var_name = non_dunder[0]
 
-                    if arr is None:
-                        for k in f.keys():
-                            if k.startswith('#'):
-                                continue
-                            if isinstance(f[k], h5py.Dataset):
-                                arr = f[k][()].T
-                                var_name = k
-                                break
-
-                    # Check top-level voxel dimensions if not in data_SA
-                    if voxel_size is None:
-                        for vk in voxel_keys:
-                            if vk in f and isinstance(f[vk], h5py.Dataset):
-                                v = np.squeeze(f[vk][()]).astype(np.float64)
-                                if v.size >= 3:
-                                    voxel_size = np.array([float(v[0]), float(v[1]), float(v[2])], dtype=np.float64)
-                                    break
-                                elif v.size == 2:
-                                    voxel_size = np.array([float(v[0]), float(v[1]), 1.0], dtype=np.float64)
-                                    break
-                                elif v.size == 1:
-                                    voxel_size = np.array([float(v), float(v), float(v)], dtype=np.float64)
-                                    break
-            except Exception as e:
-                print(f"HDF5 reading failed for {filepath}: {e}")
-
-        # 2. Fallback to scipy.io.loadmat for MATLAB v4/v6/v7 files
-        if arr is None:
-            try:
-                mat_contents = scipy.io.loadmat(filepath)
-            except NotImplementedError:
-                if h5py is not None and not is_hdf5:
-                    with h5py.File(filepath, 'r') as f:
-                        for g_name in ['data_SA', 'data_sa', 'dataSA', 'Data_SA', 'DATA_SA']:
-                            if g_name in f and isinstance(f[g_name], h5py.Group):
-                                g = f[g_name]
-                                for mr_k in ['MR_SA', 'mr_sa', 'mr', 'MR']:
-                                    if mr_k in g and isinstance(g[mr_k], h5py.Dataset):
-                                        arr = g[mr_k][()].T
-                                        var_name = f"{g_name}.{mr_k}"
-                                        break
-                                for vx_k in ['voxel_MR', 'voxel_mr', 'voxel_size', 'voxelsize', 'spacing']:
-                                    if vx_k in g and isinstance(g[vx_k], h5py.Dataset):
-                                        v = np.squeeze(g[vx_k][()]).astype(np.float64)
-                                        if v.size >= 3:
-                                            voxel_size = np.array([float(v[0]), float(v[1]), float(v[2])], dtype=np.float64)
-                                        break
-                                if arr is not None:
-                                    break
-                else:
-                    raise
-
-            if arr is None and 'mat_contents' in locals():
-                # Search inside data_SA structure in scipy.io.loadmat
-                for s_name in ['data_SA', 'data_sa', 'dataSA', 'Data_SA', 'DATA_SA']:
-                    if s_name in mat_contents:
-                        s_val = mat_contents[s_name]
-                        if hasattr(s_val, 'dtype') and s_val.dtype.names:
-                            names = s_val.dtype.names
-                            for mr_k in ['MR_SA', 'mr_sa', 'mr', 'MR']:
-                                if mr_k in names:
-                                    raw = s_val[mr_k][0, 0] if s_val.ndim == 2 else s_val[mr_k]
-                                    if hasattr(raw, 'shape'):
-                                        arr = raw
-                                        var_name = f"{s_name}.{mr_k}"
-                                        break
-                            for vx_k in ['voxel_MR', 'voxel_mr', 'voxel_size', 'voxelsize', 'spacing']:
-                                if vx_k in names:
-                                    raw_v = s_val[vx_k][0, 0] if s_val.ndim == 2 else s_val[vx_k]
-                                    v = np.squeeze(np.asarray(raw_v, dtype=np.float64))
-                                    if v.size >= 3:
-                                        voxel_size = np.array([float(v[0]), float(v[1]), float(v[2])], dtype=np.float64)
-                                    elif v.size == 2:
-                                        voxel_size = np.array([float(v[0]), float(v[1]), 1.0], dtype=np.float64)
-                                    elif v.size == 1:
-                                        voxel_size = np.array([float(v), float(v), float(v)], dtype=np.float64)
-                                    break
-                        if arr is not None:
-                            break
-
-                # Check candidate keys
-                if arr is None:
-                    candidate_keys = [
-                        'MR_SA', 'data_SA',
-                        'segmentation_all_phases', 'segmentation_ED', 'segmentation_ES',
-                        'segmentation_ed', 'segmentation_es', 'segmentation_phase',
-                        'resultado', 'middle', 'phase', 'img', 'data', 'images', 'volume'
-                    ]
-                    for k in candidate_keys:
-                        if k in mat_contents and hasattr(mat_contents[k], 'shape'):
-                            arr = mat_contents[k]
-                            var_name = k
-                            break
-
-                if arr is None:
-                    non_dunder = [k for k in mat_contents.keys() if not k.startswith('__') and hasattr(mat_contents[k], 'shape')]
-                    if non_dunder:
-                        arr = mat_contents[non_dunder[0]]
-                        var_name = non_dunder[0]
-
-                # Check top-level voxel_size / voxel_MR
-                if voxel_size is None:
-                    for vk in voxel_keys:
-                        if vk in mat_contents:
-                            v = np.squeeze(np.asarray(mat_contents[vk], dtype=np.float64))
-                            if v.size >= 3:
-                                voxel_size = np.array([float(v[0]), float(v[1]), float(v[2])], dtype=np.float64)
-                                break
-                            elif v.size == 2:
-                                voxel_size = np.array([float(v[0]), float(v[1]), 1.0], dtype=np.float64)
-                                break
-                            elif v.size == 1:
-                                voxel_size = np.array([float(v), float(v), float(v)], dtype=np.float64)
-                                break
+        # 3. Check top-level voxel dimensions if not in struct
+        if voxel_size is None and raw_mat_dict:
+            for vk in voxel_keys:
+                if vk in raw_mat_dict:
+                    v = np.squeeze(np.asarray(raw_mat_dict[vk], dtype=np.float64))
+                    if v.size >= 3:
+                        voxel_size = np.array([float(v[0]), float(v[1]), float(v[2])], dtype=np.float64)
+                        break
+                    elif v.size == 2:
+                        voxel_size = np.array([float(v[0]), float(v[1]), 1.0], dtype=np.float64)
+                        break
+                    elif v.size == 1:
+                        voxel_size = np.array([float(v), float(v), float(v)], dtype=np.float64)
+                        break
 
         if arr is None:
             raise ValueError(f"No numeric arrays or data_SA structure found in MATLAB file {base}.")
 
-        # Fallback to companion data_SA.mat if voxel_size is missing
-        if voxel_size is None and base_dir:
+        # Fallback to companion data_SA.mat if voxel_size or metadata is missing
+        if base_dir:
             fallback_path = os.path.join(base_dir, 'data_SA.mat')
             if os.path.exists(fallback_path) and os.path.abspath(filepath) != os.path.abspath(fallback_path):
                 try:
                     comp_img = load_file_4d(fallback_path)
-                    if comp_img.has_voxel_size_metadata:
+                    if voxel_size is None and comp_img.has_voxel_size_metadata:
                         voxel_size = comp_img.voxel_size.copy()
+                    if not struct_fields and comp_img.mat_struct_fields:
+                        struct_fields = comp_img.mat_struct_fields.copy()
+                        struct_name = comp_img.mat_struct_name
+                    if not raw_mat_dict and comp_img.raw_mat_dict:
+                        raw_mat_dict = comp_img.raw_mat_dict.copy()
                 except Exception:
                     pass
 
-        return Medical4DImage(arr, filename=filepath, var_name=var_name, voxel_size=voxel_size)
+        return Medical4DImage(
+            arr, filename=filepath, var_name=var_name, voxel_size=voxel_size,
+            raw_mat_dict=raw_mat_dict, mat_struct_fields=struct_fields,
+            mat_struct_name=struct_name or "data_SA"
+        )
 
     elif ext in ('.nii', '.gz') or filepath.endswith('.nii.gz'):
         if nib is None:
@@ -985,11 +1095,36 @@ def load_file_4d(filepath):
                 voxel_size = np.array([float(zooms[0]), float(zooms[1]), float(zooms[2])], dtype=np.float64)
         except Exception:
             pass
-        return Medical4DImage(arr, filename=filepath, var_name="NIfTI", voxel_size=voxel_size)
+
+        raw_mat_dict = {}
+        struct_fields = {}
+        struct_name = "data_SA"
+        if base_dir:
+            fallback_path = os.path.join(base_dir, 'data_SA.mat')
+            if os.path.exists(fallback_path):
+                try:
+                    comp_img = load_file_4d(fallback_path)
+                    if voxel_size is None and comp_img.has_voxel_size_metadata:
+                        voxel_size = comp_img.voxel_size.copy()
+                    if comp_img.mat_struct_fields:
+                        struct_fields = comp_img.mat_struct_fields.copy()
+                        struct_name = comp_img.mat_struct_name
+                    if comp_img.raw_mat_dict:
+                        raw_mat_dict = comp_img.raw_mat_dict.copy()
+                except Exception:
+                    pass
+
+        return Medical4DImage(
+            arr, filename=filepath, var_name="NIfTI", voxel_size=voxel_size,
+            raw_mat_dict=raw_mat_dict, mat_struct_fields=struct_fields, mat_struct_name=struct_name
+        )
 
     elif ext == '.npy':
         arr = np.load(filepath)
         voxel_size = None
+        raw_mat_dict = {}
+        struct_fields = {}
+        struct_name = "data_SA"
         if base_dir:
             fallback_path = os.path.join(base_dir, 'data_SA.mat')
             if os.path.exists(fallback_path):
@@ -997,9 +1132,17 @@ def load_file_4d(filepath):
                     comp_img = load_file_4d(fallback_path)
                     if comp_img.has_voxel_size_metadata:
                         voxel_size = comp_img.voxel_size.copy()
+                    if comp_img.mat_struct_fields:
+                        struct_fields = comp_img.mat_struct_fields.copy()
+                        struct_name = comp_img.mat_struct_name
+                    if comp_img.raw_mat_dict:
+                        raw_mat_dict = comp_img.raw_mat_dict.copy()
                 except Exception:
                     pass
-        return Medical4DImage(arr, filename=filepath, var_name="numpy_array", voxel_size=voxel_size)
+        return Medical4DImage(
+            arr, filename=filepath, var_name="numpy_array", voxel_size=voxel_size,
+            raw_mat_dict=raw_mat_dict, mat_struct_fields=struct_fields, mat_struct_name=struct_name
+        )
 
     elif ext == '.npz':
         npz_obj = np.load(filepath)
@@ -1015,7 +1158,27 @@ def load_file_4d(filepath):
                 if v.size >= 3:
                     voxel_size = np.array([float(v[0]), float(v[1]), float(v[2])], dtype=np.float64)
                     break
-        return Medical4DImage(arr, filename=filepath, var_name=selected_key, voxel_size=voxel_size)
+        raw_mat_dict = {}
+        struct_fields = {}
+        struct_name = "data_SA"
+        if base_dir:
+            fallback_path = os.path.join(base_dir, 'data_SA.mat')
+            if os.path.exists(fallback_path):
+                try:
+                    comp_img = load_file_4d(fallback_path)
+                    if voxel_size is None and comp_img.has_voxel_size_metadata:
+                        voxel_size = comp_img.voxel_size.copy()
+                    if comp_img.mat_struct_fields:
+                        struct_fields = comp_img.mat_struct_fields.copy()
+                        struct_name = comp_img.mat_struct_name
+                    if comp_img.raw_mat_dict:
+                        raw_mat_dict = comp_img.raw_mat_dict.copy()
+                except Exception:
+                    pass
+        return Medical4DImage(
+            arr, filename=filepath, var_name=selected_key, voxel_size=voxel_size,
+            raw_mat_dict=raw_mat_dict, mat_struct_fields=struct_fields, mat_struct_name=struct_name
+        )
 
     else:
         raise ValueError(f"Unsupported format: {ext}. Supported formats are .mat, .nii, .nii.gz, .npy, and .npz.")
@@ -3054,14 +3217,6 @@ class SegmentationEditorWidget(QWidget):
 # ==============================================================================
 # INTEGRATED NEURAL INFERENCE ENGINE (VENTSEG AI)
 # ==============================================================================
-def save_mat_dict(filepath, data_dict):
-    """Save dictionary to MATLAB .mat format."""
-    try:
-        scipy.io.savemat(filepath, data_dict)
-    except Exception as e:
-        print(f"Error saving {filepath}: {e}")
-
-
 class SegmentationWorker(QThread):
     """Background worker executing integrated direct neural inference (ResNet34-UNet)."""
     progress_updated = pyqtSignal(int, int, str)
@@ -3070,7 +3225,9 @@ class SegmentationWorker(QThread):
     segmentation_error = pyqtSignal(str)
 
     def __init__(self, data_4d, file_path="", mode="fast_edes", target_phase=0,
-                 device_str="auto", save_mat=True, voxel_size=None, output_dir=None, parent=None):
+                 device_str="auto", save_mat=True, voxel_size=None, output_dir=None,
+                 source_mat_struct=None, source_raw_dict=None, source_mat_struct_name="data_SA",
+                 parent=None):
         super().__init__(parent)
         self.data_4d = data_4d
         self.file_path = file_path
@@ -3080,6 +3237,9 @@ class SegmentationWorker(QThread):
         self.save_mat = save_mat
         self.voxel_size = np.asarray(voxel_size, dtype=np.float64) if voxel_size is not None else np.array([0.5, 0.5, 8.0], dtype=np.float64)
         self.output_dir = output_dir
+        self.source_mat_struct = source_mat_struct
+        self.source_raw_dict = source_raw_dict
+        self.source_mat_struct_name = source_mat_struct_name or "data_SA"
         self.is_cancelled = False
 
     def cancel(self):
@@ -3256,12 +3416,15 @@ class SegmentationWorker(QThread):
                     'voxel_size': self.voxel_size,
                     'es_phase': es_p + 1
                 })
-                save_mat_dict(os.path.join(base_dir, 'data_SA.mat'), {
-                    'data_SA': {
-                        'MR_SA': self.data_4d,
-                        'voxel_MR': self.voxel_size.reshape(3, 1)
-                    }
-                })
+                save_or_update_data_sa_mat(
+                    os.path.join(base_dir, 'data_SA.mat'),
+                    mr_data=self.data_4d,
+                    voxel_size=self.voxel_size,
+                    source_filepath=self.file_path,
+                    source_mat_struct=self.source_mat_struct,
+                    source_raw_dict=self.source_raw_dict,
+                    source_mat_struct_name=self.source_mat_struct_name
+                )
                 saved_files = ['segmentation_all_phases.mat', 'segmentation_ED.mat', 'segmentation_ES.mat', 'data_SA.mat']
 
             self.status_message.emit("Quantification and segmentation completed successfully.")
@@ -3322,12 +3485,15 @@ class SegmentationWorker(QThread):
                     'voxel_size': self.voxel_size,
                     'es_phase': es_p + 1
                 })
-                save_mat_dict(os.path.join(base_dir, 'data_SA.mat'), {
-                    'data_SA': {
-                        'MR_SA': self.data_4d,
-                        'voxel_MR': self.voxel_size.reshape(3, 1)
-                    }
-                })
+                save_or_update_data_sa_mat(
+                    os.path.join(base_dir, 'data_SA.mat'),
+                    mr_data=self.data_4d,
+                    voxel_size=self.voxel_size,
+                    source_filepath=self.file_path,
+                    source_mat_struct=self.source_mat_struct,
+                    source_raw_dict=self.source_raw_dict,
+                    source_mat_struct_name=self.source_mat_struct_name
+                )
                 saved_files = ['segmentation_all_phases.mat', 'segmentation_ED.mat', 'segmentation_ES.mat', 'data_SA.mat']
 
             self.status_message.emit("4D spatio-temporal segmentation completed successfully.")
@@ -3374,12 +3540,15 @@ class SegmentationWorker(QThread):
                     'ed_phase': ed_p + 1,
                     'es_phase': es_p + 1
                 })
-                save_mat_dict(os.path.join(base_dir, 'data_SA.mat'), {
-                    'data_SA': {
-                        'MR_SA': self.data_4d,
-                        'voxel_MR': self.voxel_size.reshape(3, 1)
-                    }
-                })
+                save_or_update_data_sa_mat(
+                    os.path.join(base_dir, 'data_SA.mat'),
+                    mr_data=self.data_4d,
+                    voxel_size=self.voxel_size,
+                    source_filepath=self.file_path,
+                    source_mat_struct=self.source_mat_struct,
+                    source_raw_dict=self.source_raw_dict,
+                    source_mat_struct_name=self.source_mat_struct_name
+                )
                 saved_files = ['segmentation_all_phases.mat', 'data_SA.mat']
 
             self.status_message.emit("Central slice segmentation completed.")
@@ -3423,12 +3592,15 @@ class SegmentationWorker(QThread):
                     'voxel_MR': self.voxel_size.reshape(3, 1),
                     'voxel_size': self.voxel_size
                 })
-                save_mat_dict(os.path.join(base_dir, 'data_SA.mat'), {
-                    'data_SA': {
-                        'MR_SA': self.data_4d,
-                        'voxel_MR': self.voxel_size.reshape(3, 1)
-                    }
-                })
+                save_or_update_data_sa_mat(
+                    os.path.join(base_dir, 'data_SA.mat'),
+                    mr_data=self.data_4d,
+                    voxel_size=self.voxel_size,
+                    source_filepath=self.file_path,
+                    source_mat_struct=self.source_mat_struct,
+                    source_raw_dict=self.source_raw_dict,
+                    source_mat_struct_name=self.source_mat_struct_name
+                )
                 saved_files = [phase_filename, 'segmentation_all_phases.mat', 'data_SA.mat']
 
             self.status_message.emit(f"Phase {p + 1} segmentation completed.")
@@ -4858,17 +5030,21 @@ class VentSegViewer4D(QMainWindow):
                     if os.path.exists(mf_path) and mf.lower().endswith('.mat'):
                         try:
                             if mf == "data_SA.mat" or (self.med_image.var_name and "data_SA" in self.med_image.var_name):
-                                save_mat_dict(mf_path, {
-                                    'data_SA': {
-                                        'MR_SA': self.med_image.data_4d,
-                                        'voxel_MR': new_vs.reshape(3, 1)
-                                    }
-                                })
+                                save_or_update_data_sa_mat(
+                                    mf_path,
+                                    mr_data=self.med_image.data_4d,
+                                    voxel_size=new_vs,
+                                    source_filepath=self.med_image.filename,
+                                    source_mat_struct=self.med_image.mat_struct_fields,
+                                    source_raw_dict=self.med_image.raw_mat_dict,
+                                    source_mat_struct_name=self.med_image.mat_struct_name
+                                )
                             else:
-                                m_dict = scipy.io.loadmat(mf_path)
-                                m_dict['voxel_size'] = new_vs
-                                m_dict['voxel_MR'] = new_vs.reshape(3, 1)
-                                save_mat_dict(mf_path, m_dict)
+                                m_dict, _, _ = load_mat_dict_all(mf_path)
+                                if m_dict:
+                                    m_dict['voxel_size'] = new_vs
+                                    m_dict['voxel_MR'] = new_vs.reshape(3, 1) if new_vs.size == 3 else new_vs
+                                    save_mat_dict(mf_path, m_dict)
                         except Exception as e:
                             print(f"Failed to update voxel_size in {mf}: {e}")
 
@@ -4956,6 +5132,9 @@ class VentSegViewer4D(QMainWindow):
             save_mat=save_mat,
             voxel_size=self.med_image.voxel_size,
             output_dir=output_dir,
+            source_mat_struct=getattr(self.med_image, 'mat_struct_fields', None),
+            source_raw_dict=getattr(self.med_image, 'raw_mat_dict', None),
+            source_mat_struct_name=getattr(self.med_image, 'mat_struct_name', 'data_SA'),
             parent=self
         )
 
@@ -5541,13 +5720,16 @@ class VentSegViewer4D(QMainWindow):
         saved_files = []
         try:
             # 1. 4D dataset with data_SA structure and voxel calibration (.mat)
-            save_mat_dict(os.path.join(target_dir, 'data_SA.mat'), {
-                'data_SA': {
-                    'MR_SA': self.med_image.data_4d,
-                    'voxel_MR': self.med_image.voxel_size.reshape(3, 1)
-                }
-            })
-            saved_files.append("data_SA.mat (4D volume with data_SA.MR_SA and data_SA.voxel_MR)")
+            save_or_update_data_sa_mat(
+                os.path.join(target_dir, 'data_SA.mat'),
+                mr_data=self.med_image.data_4d,
+                voxel_size=self.med_image.voxel_size,
+                source_filepath=self.med_image.filename,
+                source_mat_struct=self.med_image.mat_struct_fields,
+                source_raw_dict=self.med_image.raw_mat_dict,
+                source_mat_struct_name=self.med_image.mat_struct_name
+            )
+            saved_files.append("data_SA.mat (4D volume with data_SA.MR_SA, data_SA.voxel_MR, and original parameters)")
 
             # 2. Segmentation masks
             if self.med_image.has_mask and self.med_image.mask_4d is not None:
