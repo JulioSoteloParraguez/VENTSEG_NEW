@@ -23,7 +23,7 @@ Interactive workstation and analysis suite for 4D cardiac medical imaging:
   - Dimension 0: Rows (Height / Y)
   - Dimension 1: Columns (Width / X)
   - Dimension 2: Slices (Z-Axis / Long/Short-Axis Stack)
-  - Dimension 3: Cardiac Phases (Time / Cardiac Cycle / T)
+  - Dimension 3: Cardiac Phases (Time / Cardiac Cycle / T) sdfsdfsdfsdfsdfsdf
 
 Supported Formats:
   - MATLAB .mat (data_SA.mat [with data_SA.MR_SA and data_SA.voxel_MR],
